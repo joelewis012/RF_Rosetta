@@ -15,7 +15,7 @@
 
 **The first universal RF signal identifier for the Flipper Zero.**
 
-Point your Flipper at any unknown wireless signal and find out exactly what it is —
+Point your Flipper at any unknown wireless signal and find out exactly what it is.
 car key, tyre sensor, alarm, smart meter, medical device, weather station, or one of
 50+ other identified protocols. In seconds.
 
@@ -31,8 +31,8 @@ car key, tyre sensor, alarm, smart meter, medical device, weather station, or on
 
 RF Rosetta is a **passive RF signal identification tool** for the Flipper Zero. It
 listens across the Sub-GHz spectrum, captures any signal that rises above the noise
-floor, analyses its physical characteristics — frequency, modulation, pulse timing,
-repetition pattern, bandwidth — and matches them against a database of 50+ known
+floor, analyses its physical characteristics. frequency, modulation, pulse timing,
+repetition pattern, bandwidth and matches them against a database of 50+ known
 wireless protocols.
 
 It then tells you not just *what it is*, but everything meaningful about it: what
@@ -105,7 +105,7 @@ For every identified signal, RF Rosetta provides:
 - Plain-English description of what the device does
 
 **Security analysis**
-- Fixed code vs rolling code — tells you immediately if a signal is replay-vulnerable
+- Fixed code vs rolling code Tells you immediately if a signal is replay-vulnerable
 - Encryption: yes/no/type
 - Known vulnerability flags (e.g. MouseJack, relay attack, jamming vulnerability)
 - Clear, plain-language security note for every protocol
@@ -283,7 +283,7 @@ RF Rosetta creates a folder at `SD:/rf_rosetta/` containing:
 ## FAQ
 
 **Will this work on all Flipper Zero hardware?**
-Yes — it uses the built-in CC1101 Sub-GHz radio. No additional hardware is required
+Yes, It uses the built-in CC1101 Sub-GHz radio. No additional hardware is required
 for the Sub-GHz, 315 MHz, 433 MHz, 868 MHz and 915 MHz protocols. 2.4 GHz protocols
 require the ESP32 WiFi dev board.
 
@@ -293,15 +293,15 @@ decoding (e.g. extracting actual TPMS pressure values or meter readings as numbe
 is on the roadmap for protocols where this is technically feasible.
 
 **Is this legal to use?**
-RF Rosetta is a passive listener — it does not transmit anything. Passive reception
+RF Rosetta is a passive listener. It does not transmit anything. Passive reception
 of RF signals is legal in virtually all jurisdictions. What you do with the
 information is your responsibility.
 
 **Can it pick up 2.4 GHz signals?**
-Not natively — the CC1101 covers 300–928 MHz. The app flags 2.4 GHz protocols in
+Not natively, the CC1101 covers 300–928 MHz. The app flags 2.4 GHz protocols in
 results and notes that an ESP32 module is required.
 
-**A signal isn't being identified — what should I do?**
+**A signal isn't being identified. What should I do?**
 Check the full details screen for the raw signal characteristics, then open a GitHub
 issue with those details. Unknown signals help grow the database.
 
