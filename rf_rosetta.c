@@ -9,7 +9,7 @@
 // Scene handler tables
 // ─────────────────────────────────────────────────────────────────────────────
 
-static void (*const on_enter[])(void*) = {
+static void (*const scene_on_enter[])(void*) = {
     rf_rosetta_scene_main_menu_on_enter,
     rf_rosetta_scene_scanning_on_enter,
     rf_rosetta_scene_result_on_enter,
@@ -18,7 +18,7 @@ static void (*const on_enter[])(void*) = {
     rf_rosetta_scene_settings_on_enter,
 };
 
-static bool (*const on_event[])(void*, SceneManagerEvent) = {
+static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
     rf_rosetta_scene_main_menu_on_event,
     rf_rosetta_scene_scanning_on_event,
     rf_rosetta_scene_result_on_event,
@@ -27,7 +27,7 @@ static bool (*const on_event[])(void*, SceneManagerEvent) = {
     rf_rosetta_scene_settings_on_event,
 };
 
-static void (*const on_exit[])(void*) = {
+static void (*const scene_on_exit[])(void*) = {
     rf_rosetta_scene_main_menu_on_exit,
     rf_rosetta_scene_scanning_on_exit,
     rf_rosetta_scene_result_on_exit,
@@ -37,9 +37,9 @@ static void (*const on_exit[])(void*) = {
 };
 
 const SceneManagerHandlers rf_rosetta_scene_handlers = {
-    .on_enter_handlers = on_enter,
-    .on_event_handlers = on_event,
-    .on_exit_handlers  = on_exit,
+    .on_enter_handlers = scene_on_enter,
+    .on_event_handlers = scene_on_event,
+    .on_exit_handlers  = scene_on_exit,
     .scene_num         = RFRosettaSceneCount,
 };
 
@@ -112,7 +112,6 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     // Scene + view dispatcher
     app->scene_manager  = scene_manager_alloc(&rf_rosetta_scene_handlers, app);
     app->view_dispatcher = view_dispatcher_alloc();
-    view_dispatcher_enable_queue(app->view_dispatcher);
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
