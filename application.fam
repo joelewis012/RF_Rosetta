@@ -1,0 +1,14 @@
+App(
+    appid="rf_rosetta",
+    name="RF Rosetta",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="rf_rosetta_app",
+    requires=["subghz"],
+    stack_size=4 * 1024,
+    fap_icon="rf_rosetta_10px.png",
+    fap_category="Sub-GHz",
+    fap_description="Universal RF signal identifier. Point at any unknown signal and find out exactly what it is.",
+    fap_author="Joe",
+    fap_weburl="https://github.com/yourusername/rf_rosetta",
+    fap_version="1.0",
+)
