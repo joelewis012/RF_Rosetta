@@ -9,13 +9,29 @@
 // Frequency sweep table
 // ─────────────────────────────────────────────────────────────────────────────
 
+// CC1101 valid bands:  300-348 MHz | 387-464 MHz | 779-928 MHz
+// Momentum extends to: 281-361 MHz | 378-481 MHz | 749-962 MHz
+// NOTE: 149-152 MHz was removed — it is outside all valid bands and caused
+//       a "SubGhz: Incorrect frequency during set" crash.
 const uint32_t SWEEP_FREQUENCIES[] = {
+    // --- Extended low band (Momentum: 281-361 MHz) ---
+    290000000, 300000000,
+    // --- 315 MHz band ---
     314900000, 315100000,
+    // --- Extended mid (Momentum: up to ~361 MHz) ---
+    345000000,
+    // --- 433/434 MHz band ---
     433050000, 433420000, 433920000, 434420000, 434790000,
     434000000,
+    // --- 400-405 MHz (pagers, telemetry) ---
     401000000, 403000000, 405000000,
-    149500000, 151000000, 152000000,
+    // --- Extended upper mid (Momentum: up to ~481 MHz) ---
+    470000000,
+    // --- Extended lower high band (Momentum: 749-779 MHz) ---
+    750000000, 770000000,
+    // --- 868 MHz (EU ISM) ---
     868000000, 868300000, 868500000, 869000000, 869525000,
+    // --- 902-928 MHz (US ISM) ---
     902000000, 908000000, 915000000, 920000000, 928000000,
 };
 

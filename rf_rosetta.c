@@ -6,6 +6,17 @@
 #include <stdio.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Navigation (back button) callback — routes back events through scene manager
+// Without this, back presses from Submenu/VarList/TextBox views are swallowed
+// and the user cannot navigate backwards without restarting the app.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static bool rf_rosetta_navigation_event_callback(void* ctx) {
+    RFRosettaApp* app = ctx;
+    return scene_manager_handle_back_event(app->scene_manager);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scene handler tables
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -113,6 +124,8 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     app->scene_manager  = scene_manager_alloc(&rf_rosetta_scene_handlers, app);
     app->view_dispatcher = view_dispatcher_alloc();
     view_dispatcher_set_event_callback_context(app->view_dispatcher, app);
+    view_dispatcher_set_navigation_event_callback(app->view_dispatcher,
+        rf_rosetta_navigation_event_callback);
     view_dispatcher_attach_to_gui(app->view_dispatcher, app->gui, ViewDispatcherTypeFullscreen);
 
     // Standard views
