@@ -4,23 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// View model
-// ─────────────────────────────────────────────────────────────────────────────
-
-typedef struct {
-    float    rssi;
-    float    history[RSSI_HISTORY_LEN];
-    uint8_t  history_count;
-    uint32_t frequency;
-    bool     signal_detected;
-    bool     analyzing;
-    ScanMode mode;
-    bool     antenna_external;
-    char     freq_str[20];
-    char     status_str[32];
-    uint8_t  anim_tick;
-} ScanViewModel;
+// ScanViewModel is defined in rf_rosetta.h so rf_rosetta.c can use it too.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Signal bars helpers

@@ -15,6 +15,26 @@
 #include "signal_capture.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Scanning view model
+// Defined here (not in scene_scanning.c) so rf_rosetta.c can call
+// view_allocate_model(sizeof(ScanViewModel)) at startup.
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct {
+    float    rssi;
+    float    history[RSSI_HISTORY_LEN];
+    uint8_t  history_count;
+    uint32_t frequency;
+    bool     signal_detected;
+    bool     analyzing;
+    ScanMode mode;
+    bool     antenna_external;
+    char     freq_str[20];
+    char     status_str[32];
+    uint8_t  anim_tick;
+} ScanViewModel;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scenes
 // ─────────────────────────────────────────────────────────────────────────────
 
