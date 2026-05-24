@@ -163,20 +163,40 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     furi_hal_subghz_idle();
     apply_antenna(ctx->antenna);
 
-    // Apply mode-specific CC1101 preset — without this all modes behave identically.
-    // OOK650 = standard Sub-GHz (remotes, sensors)
-    // 2FSK narrow = better sensitivity for narrow-band FSK signals
-    // 2FSK wide = catches more signal types, noisier floor
+    // Apply mode-specific CC1101 preset using furi_hal_subghz_load_custom_preset.
+    // Each array is {register_address, value} pairs terminated by {0,0}.
+    // OOK650: standard OOK, 650 kHz BW — best for remotes and sensors
+    // FSK238: narrow 2-FSK, 238 kHz deviation — better sensitivity for FSK
+    // FSK476: wider 2-FSK, 476 kHz deviation — catches more FSK signal types
+    static const uint8_t preset_ook650[] = {
+        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
+        0x14, 0x00, 0x13, 0x00, 0x12, 0x30, 0x11, 0x32,
+        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
+        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
+    };
+    static const uint8_t preset_fsk238[] = {
+        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
+        0x14, 0x00, 0x13, 0x00, 0x12, 0x0C, 0x11, 0x32,
+        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
+        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
+    };
+    static const uint8_t preset_fsk476[] = {
+        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
+        0x14, 0x00, 0x13, 0x00, 0x12, 0x0E, 0x11, 0x32,
+        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
+        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
+    };
+
     switch(ctx->mode) {
         case ScanModeRFNarrow:
-            furi_hal_subghz_load_preset(FuriHalSubGhzPreset2FSKDev238Async);
+            furi_hal_subghz_load_custom_preset(preset_fsk238);
             break;
         case ScanModeRFWide:
-            furi_hal_subghz_load_preset(FuriHalSubGhzPreset2FSKDev476Async);
+            furi_hal_subghz_load_custom_preset(preset_fsk476);
             break;
         case ScanModeSubGHz:
         default:
-            furi_hal_subghz_load_preset(FuriHalSubGhzPresetOok650Async);
+            furi_hal_subghz_load_custom_preset(preset_ook650);
             break;
     }
 
