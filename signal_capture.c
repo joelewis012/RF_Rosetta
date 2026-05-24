@@ -163,6 +163,23 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     furi_hal_subghz_idle();
     apply_antenna(ctx->antenna);
 
+    // Apply mode-specific CC1101 preset — without this all modes behave identically.
+    // OOK650 = standard Sub-GHz (remotes, sensors)
+    // 2FSK narrow = better sensitivity for narrow-band FSK signals
+    // 2FSK wide = catches more signal types, noisier floor
+    switch(ctx->mode) {
+        case ScanModeRFNarrow:
+            furi_hal_subghz_load_preset(FuriHalSubGhzPreset2FSKDev238Async);
+            break;
+        case ScanModeRFWide:
+            furi_hal_subghz_load_preset(FuriHalSubGhzPreset2FSKDev476Async);
+            break;
+        case ScanModeSubGHz:
+        default:
+            furi_hal_subghz_load_preset(FuriHalSubGhzPresetOok650Async);
+            break;
+    }
+
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
     furi_hal_subghz_set_frequency_and_path(freq);
     furi_hal_subghz_rx();

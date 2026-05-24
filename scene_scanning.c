@@ -51,7 +51,16 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     // Header
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 0, 8, "RF ROSETTA");
-    canvas_draw_str(canvas, 80, 8, m->antenna_external ? "[EXT]" : "[INT]");
+
+    // Antenna indicator — inverted badge when external so it's hard to miss
+    if(m->antenna_external) {
+        canvas_draw_box(canvas, 75, 0, 27, 10);
+        canvas_set_color(canvas, ColorWhite);
+        canvas_draw_str(canvas, 77, 8, "[EXT]");
+        canvas_set_color(canvas, ColorBlack);
+    } else {
+        canvas_draw_str(canvas, 77, 8, "[INT]");
+    }
 
     const char* mode_str = "SGHz";
     if(m->mode == ScanModeRFNarrow) mode_str = "NRW";
@@ -203,7 +212,7 @@ void rf_rosetta_scene_scanning_on_enter(void* ctx) {
     view_set_draw_callback(app->scanning_view, scanning_draw_cb);
     view_set_input_callback(app->scanning_view, scanning_input_cb);
     view_set_context(app->scanning_view, app);
-    view_allocate_model(app->scanning_view, ViewModelTypeLockFree, sizeof(ScanViewModel));
+    // Model is allocated once at app startup — just reset it here
 
     // Initialise model — direct access
     ScanViewModel* vm = (ScanViewModel*)view_get_model(app->scanning_view);

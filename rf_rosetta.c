@@ -148,6 +148,9 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
 
     // Custom scanning view — allocated in scene_scanning.c
     app->scanning_view = view_alloc();
+    // Allocate model ONCE here — calling view_allocate_model again in on_enter
+    // causes a furi_check failure on every re-entry (e.g. after Settings → Scan).
+    view_allocate_model(app->scanning_view, ViewModelTypeLockFree, sizeof(ScanViewModel));
     view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewScanning, app->scanning_view);
 
     // Mutex for sharing signal data between timer and UI
