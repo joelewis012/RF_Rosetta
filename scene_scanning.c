@@ -10,12 +10,13 @@
 // Signal bars helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-#define BAR_COUNT   5
-#define BAR_W       10
-#define BAR_GAP     4
+// Left-anchored bars, 5 steps, fitted in x=1..54
+#define BAR_COUNT    5
+#define BAR_W        8
+#define BAR_GAP      3
 #define BAR_MAX_H   30
-#define BAR_BASE_Y  50
-#define BAR_START_X 28
+#define BAR_BASE_Y  44
+#define BAR_START_X  2
 
 static uint8_t rssi_to_bars(float rssi) {
     if(rssi <= -100.0f) return 1;
@@ -25,6 +26,20 @@ static uint8_t rssi_to_bars(float rssi) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Draw callback
+//
+// Screen layout (128 × 64 px):
+//
+//  y=0  ┌─────────────────────────────────────────────────┐
+//       │ RF ROSETTA      SubGHz            [INT]         │ ← header
+//  y=10 ├─────────────────────────────────────────────────┤
+//       │                                                 │
+//       │  ▏▎▍▌▋          433 MHz                        │ ← bars + freq
+//       │                  -83 dBm                       │ ← rssi
+//  y=44 │                                                 │
+//  y=46 │ Listening...                                    │ ← status
+//  y=55 ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
+//  y=56 │▁▁▂▃▂▁▂▁▁▂▃▂▁                                  │ ← sparkline
+//  y=63 └─────────────────────────────────────────────────┘
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
@@ -32,82 +47,96 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
 
-    // Header
+    // ── Zone 1: Header (y 0–10) ───────────────────────────────────────────────
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 0, 8, "RF ROSETTA");
+    canvas_draw_str(canvas, 1, 8, "RF ROSETTA");
 
-    // Antenna indicator — inverted badge when external so it's hard to miss
+    // Mode label — centre of header
+    const char* mode_str = "SubGHz";
+    if(m->mode == ScanModeRFNarrow) mode_str = "Narrow";
+    if(m->mode == ScanModeRFWide)   mode_str = "Wide";
+    canvas_draw_str(canvas, 50, 8, mode_str);
+
+    // Antenna badge — right-aligned, inverted when external
     if(m->antenna_external) {
-        canvas_draw_box(canvas, 75, 0, 27, 10);
+        canvas_draw_box(canvas, 100, 0, 28, 10);
         canvas_set_color(canvas, ColorWhite);
-        canvas_draw_str(canvas, 77, 8, "[EXT]");
+        canvas_draw_str(canvas, 102, 8, "[EXT]");
         canvas_set_color(canvas, ColorBlack);
     } else {
-        canvas_draw_str(canvas, 77, 8, "[INT]");
+        canvas_draw_str(canvas, 102, 8, "[INT]");
     }
 
-    const char* mode_str = "SGHz";
-    if(m->mode == ScanModeRFNarrow) mode_str = "NRW";
-    if(m->mode == ScanModeRFWide)   mode_str = "WDE";
-    canvas_draw_str(canvas, 108, 8, mode_str);
     canvas_draw_line(canvas, 0, 10, 128, 10);
 
-    // Signal bars
-    uint8_t filled = rssi_to_bars(m->rssi);
-    uint8_t min_h  = 6;
-    uint8_t step   = (BAR_MAX_H - min_h) / (BAR_COUNT - 1);
-    for(uint8_t i = 0; i < BAR_COUNT; i++) {
-        uint8_t h = min_h + step * i;
-        uint8_t x = BAR_START_X + i * (BAR_W + BAR_GAP);
-        if(i < filled) {
-            canvas_draw_box(canvas, x, BAR_BASE_Y - h, BAR_W, h);
+    // ── Zone 2: Main body (y 12–44) ──────────────────────────────────────────
+
+    if(m->signal_detected || m->analyzing) {
+        // ── Signal detected / analysing overlay (replaces bars) ──────────────
+        canvas_set_font(canvas, FontPrimary);
+        if(m->analyzing) {
+            canvas_draw_str(canvas, 2, 28, "ANALYSING...");
         } else {
-            canvas_draw_box(canvas, x, BAR_BASE_Y - 4, BAR_W, 4);
+            canvas_draw_str(canvas, 2, 28, "SIGNAL CAUGHT!");
         }
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 2, 40, "Press OK to identify");
+
+    } else {
+        // ── Signal bars (left column x 2–53) ─────────────────────────────────
+        uint8_t filled = rssi_to_bars(m->rssi);
+        uint8_t min_h  = 5;
+        uint8_t h_step = (BAR_MAX_H - min_h) / (BAR_COUNT - 1);
+        for(uint8_t i = 0; i < BAR_COUNT; i++) {
+            uint8_t h = min_h + h_step * i;
+            uint8_t x = BAR_START_X + i * (BAR_W + BAR_GAP);
+            if(i < filled) {
+                canvas_draw_box(canvas, x, BAR_BASE_Y - h, BAR_W, h);
+            } else {
+                // Empty bar — just an outline
+                canvas_draw_frame(canvas, x, BAR_BASE_Y - 4, BAR_W, 4);
+            }
+        }
+
+        // ── Frequency (right column, large font) ─────────────────────────────
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 60, 26, m->freq_str);
+
+        // ── RSSI (right column, small font) ──────────────────────────────────
+        char rssi_str[12];
+        snprintf(rssi_str, sizeof(rssi_str), "%.0f dBm", (double)m->rssi);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 62, 38, rssi_str);
+
+        // ── Idle animation dot (top-left, above bars) ────────────────────────
+        uint8_t ps = (m->anim_tick / 8) % 3;
+        canvas_draw_disc(canvas, 8, 17, ps + 1);
     }
 
-    // Pulsing dot when idle
-    if(!m->signal_detected && !m->analyzing) {
-        uint8_t ps = (m->anim_tick / 4) % 4;
-        canvas_draw_disc(canvas, 12, 36, ps + 2);
-    }
-
-    // Frequency and RSSI
+    // ── Zone 3: Status text (y 46–54) ────────────────────────────────────────
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 0, BAR_BASE_Y + 4, m->freq_str);
+    canvas_draw_str(canvas, 1, 54, m->status_str);
 
-    char rssi_str[12];
-    snprintf(rssi_str, sizeof(rssi_str), "%.0fdBm", (double)m->rssi);
-    canvas_draw_str(canvas, 90, BAR_BASE_Y + 4, rssi_str);
-
-    // Status
-    canvas_draw_str(canvas, 0, 63, m->status_str);
-
-    // Overlay when signal caught
-    if(m->signal_detected && !m->analyzing) {
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 40, "SIGNAL CAUGHT!");
-    }
-    if(m->analyzing) {
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 40, "ANALYSING...");
-    }
-
-    // Tiny sparkline at bottom
-    if(!m->signal_detected && m->history_count > 1) {
-        uint8_t count = m->history_count;
-        float   step_x = 128.0f / (float)(count > 1 ? count - 1 : 1);
+    // ── Zone 4: Sparkline strip (y 56–63) ────────────────────────────────────
+    // Separate from status text — 8 px strip at very bottom
+    if(m->history_count > 1) {
+        uint8_t count  = m->history_count;
+        float   x_step = 128.0f / (float)(count > 1 ? count - 1 : 1);
         for(uint8_t i = 1; i < count; i++) {
-            float   r0 = m->history[i - 1];
-            float   r1 = m->history[i];
-            uint8_t y0 = 63 - (uint8_t)((r0 + 100.0f) / 60.0f * 7.0f);
-            uint8_t y1 = 63 - (uint8_t)((r1 + 100.0f) / 60.0f * 7.0f);
-            uint8_t x0 = (uint8_t)((i - 1) * step_x);
-            uint8_t x1 = (uint8_t)(i * step_x);
+            float r0 = m->history[i - 1];
+            float r1 = m->history[i];
+            // Map dBm range -120..-40 → pixel row 63..56
+            uint8_t y0 = 63 - (uint8_t)((r0 + 120.0f) / 80.0f * 7.0f);
+            uint8_t y1 = 63 - (uint8_t)((r1 + 120.0f) / 80.0f * 7.0f);
+            if(y0 < 56) y0 = 56;  if(y0 > 63) y0 = 63;
+            if(y1 < 56) y1 = 56;  if(y1 > 63) y1 = 63;
+            uint8_t x0 = (uint8_t)((i - 1) * x_step);
+            uint8_t x1 = (uint8_t)(i * x_step);
             canvas_draw_line(canvas, x0, y0, x1, y1);
         }
     }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input callback
