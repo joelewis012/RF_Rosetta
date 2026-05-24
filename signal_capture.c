@@ -94,22 +94,23 @@ float rssi_history_get(const RSSIHistory* h, uint8_t index) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Antenna switching via GPIO
-// gpio_ext_pa7 = Flipper external header pin 10 (SPI MOSI / GPIO)
-// If your hardware uses a different pin, update RF_ROSETTA_ANTENNA_GPIO_PIN
-// in signal_capture.h
+//
+// IMPORTANT: gpio_ext_pa7 is the CC1101 SPI MOSI line — using it as a GPIO
+// while the radio is active corrupts SPI transfers and silently breaks RF.
+// We use gpio_ext_pa6 (external header pin 12) instead, which is a safe
+// general-purpose output that does not conflict with the SubGHz bus.
+//
+// Wire your external antenna switch signal to Flipper header pin 12 (PA6).
+// High = external antenna active. Low = internal antenna.
+//
+// If your switch uses a different pin, update RF_ROSETTA_ANTENNA_GPIO_PIN
+// in signal_capture.h.
 // ─────────────────────────────────────────────────────────────────────────────
 
 static void apply_antenna(AntennaMode ant) {
-    // gpio_ext_pa7 is declared in furi_hal_gpio.h (included via furi_hal.h)
-    // It maps to Flipper external GPIO header pin 10.
     const GpioPin* pin = RF_ROSETTA_ANTENNA_GPIO_PIN;
-    if(ant == AntennaExternal) {
-        furi_hal_gpio_init(pin, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-        furi_hal_gpio_write(pin, true);
-    } else {
-        furi_hal_gpio_init(pin, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-        furi_hal_gpio_write(pin, false);
-    }
+    furi_hal_gpio_init(pin, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_write(pin, (ant == AntennaExternal));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +162,6 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
 
     furi_hal_subghz_reset();
     furi_hal_subghz_idle();
-    apply_antenna(ctx->antenna);
 
     // Apply mode-specific CC1101 preset using furi_hal_subghz_load_custom_preset.
     // Each array is {register_address, value} pairs terminated by {0,0}.
@@ -203,6 +203,11 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
     furi_hal_subghz_set_frequency_and_path(freq);
     furi_hal_subghz_rx();
+
+    // Apply antenna GPIO LAST — after all radio init so the pin state isn't
+    // reset by furi_hal_subghz_reset() or load_custom_preset above.
+    apply_antenna(ctx->antenna);
+
     ctx->running = true;
     return true;
 }

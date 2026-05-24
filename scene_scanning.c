@@ -128,8 +128,8 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
             // Map dBm range -120..-40 → pixel row 63..56
             uint8_t y0 = 63 - (uint8_t)((r0 + 120.0f) / 80.0f * 7.0f);
             uint8_t y1 = 63 - (uint8_t)((r1 + 120.0f) / 80.0f * 7.0f);
-            if(y0 < 56) y0 = 56;  if(y0 > 63) y0 = 63;
-            if(y1 < 56) y1 = 56;  if(y1 > 63) y1 = 63;
+            y0 = (y0 < 56) ? 56 : (y0 > 63 ? 63 : y0);
+            y1 = (y1 < 56) ? 56 : (y1 > 63 ? 63 : y1);
             uint8_t x0 = (uint8_t)((i - 1) * x_step);
             uint8_t x1 = (uint8_t)(i * x_step);
             canvas_draw_line(canvas, x0, y0, x1, y1);
