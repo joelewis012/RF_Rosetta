@@ -29,9 +29,13 @@ typedef struct {
     bool     analyzing;
     ScanMode mode;
     bool     antenna_external;
+    bool     ext_not_found;      // true when external was requested but not connected
     char     freq_str[20];
     char     status_str[32];
     uint8_t  anim_tick;
+    int8_t   rssi_trend;         // +1 = stronger, -1 = weaker, 0 = steady
+    bool     seen_before;        // fingerprint: this device seen in this session
+    uint8_t  seen_count;         // how many times seen
 } ScanViewModel;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +49,7 @@ typedef enum {
     RFRosettaSceneDetails,
     RFRosettaSceneSaved,
     RFRosettaSceneSettings,
+    RFRosettaSceneAbout,
     RFRosettaSceneCount,
 } RFRosettaScene;
 
@@ -136,6 +141,11 @@ typedef struct {
     uint8_t             saved_count;
     uint8_t             selected_saved;  // index for details view
 
+    // Signal fingerprinting — hash of (freq, modulation, pulse_avg) seen this session
+    uint32_t            fingerprints[64];
+    uint8_t             fingerprint_counts[64];
+    uint8_t             fingerprint_num;
+
     // Storage (for log + saves)
     Storage*            storage;
     File*               log_file;
@@ -177,6 +187,11 @@ void rf_rosetta_scene_saved_on_exit(void* ctx);
 void rf_rosetta_scene_settings_on_enter(void* ctx);
 bool rf_rosetta_scene_settings_on_event(void* ctx, SceneManagerEvent ev);
 void rf_rosetta_scene_settings_on_exit(void* ctx);
+
+// About
+void rf_rosetta_scene_about_on_enter(void* ctx);
+bool rf_rosetta_scene_about_on_event(void* ctx, SceneManagerEvent ev);
+void rf_rosetta_scene_about_on_exit(void* ctx);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage helpers (defined in rf_rosetta.c)

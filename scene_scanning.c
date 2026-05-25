@@ -51,18 +51,25 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 8, "RF ROSETTA");
 
-    // Mode label — centre of header
-    const char* mode_str = "SubGHz";
-    if(m->mode == ScanModeRFNarrow) mode_str = "Narrow";
-    if(m->mode == ScanModeRFWide)   mode_str = "Wide";
-    canvas_draw_str(canvas, 50, 8, mode_str);
+    // Mode label — 3-char abbreviation keeps it from overlapping app name
+    const char* mode_str = "OOK";
+    if(m->mode == ScanModeRFNarrow) mode_str = "FSK";
+    if(m->mode == ScanModeRFWide)   mode_str = "WID";
+    canvas_draw_str(canvas, 68, 8, mode_str);
 
-    // Antenna badge — right-aligned, inverted when external
+    // Antenna badge — right-aligned, inverted+warning when external missing
     if(m->antenna_external) {
-        canvas_draw_box(canvas, 100, 0, 28, 10);
-        canvas_set_color(canvas, ColorWhite);
-        canvas_draw_str(canvas, 102, 8, "[EXT]");
-        canvas_set_color(canvas, ColorBlack);
+        if(m->ext_not_found) {
+            // EXT requested but cc1101_ext not found — draw with dotted outline
+            canvas_draw_frame(canvas, 100, 0, 28, 10);
+            canvas_draw_str(canvas, 102, 8, "!EXT");
+        } else {
+            // EXT confirmed active — solid inverted badge
+            canvas_draw_box(canvas, 100, 0, 28, 10);
+            canvas_set_color(canvas, ColorWhite);
+            canvas_draw_str(canvas, 102, 8, "[EXT]");
+            canvas_set_color(canvas, ColorBlack);
+        }
     } else {
         canvas_draw_str(canvas, 102, 8, "[INT]");
     }
@@ -102,11 +109,31 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 60, 26, m->freq_str);
 
-        // ── RSSI (right column, small font) ──────────────────────────────────
+        // ── RSSI + trend arrow (right column, small font) ────────────────────
         char rssi_str[12];
         snprintf(rssi_str, sizeof(rssi_str), "%.0f dBm", (double)m->rssi);
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 62, 38, rssi_str);
+
+        // Trend arrow — drawn just to the right of the RSSI value
+        if(m->rssi_trend > 0) {
+            // Upward triangle (stronger)
+            canvas_draw_triangle(canvas, 118, 32, 4, 5, CanvasDirectionTopToBottom);
+        } else if(m->rssi_trend < 0) {
+            // Downward triangle (weaker)
+            canvas_draw_triangle(canvas, 118, 37, 4, 5, CanvasDirectionBottomToTop);
+        } else {
+            // Steady — small dash
+            canvas_draw_line(canvas, 115, 35, 121, 35);
+        }
+
+        // ── Fingerprint badge ─────────────────────────────────────────────────
+        if(m->seen_before && m->seen_count > 1) {
+            char fp_str[8];
+            snprintf(fp_str, sizeof(fp_str), "x%d", m->seen_count);
+            canvas_draw_frame(canvas, 60, 40, 24, 9);
+            canvas_draw_str(canvas, 62, 48, fp_str);
+        }
 
         // ── Idle animation dot (top-left, above bars) ────────────────────────
         uint8_t ps = (m->anim_tick / 8) % 3;
@@ -184,11 +211,30 @@ static void scan_timer_cb(void* ctx) {
     // Update view model — direct access avoids with_view_model macro issues
     ScanViewModel* vm = (ScanViewModel*)view_get_model(app->scanning_view);
     if(vm) {
+        // RSSI trend — compare last 5 samples
+        int8_t trend = 0;
+        if(app->rssi_history.count >= 5) {
+            float recent = rssi_history_get(&app->rssi_history,
+                               (uint8_t)(app->rssi_history.count - 1));
+            float older  = rssi_history_get(&app->rssi_history,
+                               (uint8_t)(app->rssi_history.count > 5 ?
+                               app->rssi_history.count - 5 : 0));
+            if(recent - older >  3.0f) trend =  1;
+            if(older - recent >  3.0f) trend = -1;
+        }
+
         vm->rssi            = rssi;
+        vm->rssi_trend      = trend;
         vm->frequency       = signal_capture_current_freq(app->capture_ctx);
         vm->signal_detected = app->signal_detected;
         vm->analyzing       = app->analyzing;
         vm->anim_tick++;
+        vm->antenna_external = (app->antenna == AntennaExternal);
+        vm->ext_not_found    = !signal_capture_antenna_ok(app->capture_ctx);
+        vm->mode             = app->scan_mode;
+
+        // Fingerprint — check session seen count for current signal
+        // (populated in the acquire path; just pass through here)
 
         uint8_t cnt = app->rssi_history.count < RSSI_HISTORY_LEN
                         ? app->rssi_history.count
@@ -203,6 +249,8 @@ static void scan_timer_cb(void* ctx) {
 
         if(app->signal_detected) {
             snprintf(vm->status_str, sizeof(vm->status_str), "Press OK to identify");
+        } else if(vm->ext_not_found && app->antenna == AntennaExternal) {
+            snprintf(vm->status_str, sizeof(vm->status_str), "EXT not found, using INT");
         } else {
             snprintf(vm->status_str, sizeof(vm->status_str), "Listening...");
         }
@@ -274,6 +322,36 @@ bool rf_rosetta_scene_scanning_on_event(void* ctx, SceneManagerEvent ev) {
                     protocol_db_decode(&app->capture, &app->match);
                 }
                 rf_rosetta_log_signal(app, &app->capture, &app->match);
+
+                // ── Signal fingerprinting ─────────────────────────────────
+                // Simple hash: freq/MHz bucket + modulation + pulse_avg bucket
+                uint32_t fp = (uint32_t)(app->capture.frequency / 1000000) * 1000
+                            + (uint32_t)app->capture.modulation * 100
+                            + (uint32_t)(app->capture.pulse_avg / 50);
+                uint8_t  fp_idx = 0;
+                bool     fp_found = false;
+                for(uint8_t i = 0; i < app->fingerprint_num; i++) {
+                    if(app->fingerprints[i] == fp) {
+                        app->fingerprint_counts[i]++;
+                        fp_idx = i;
+                        fp_found = true;
+                        break;
+                    }
+                }
+                if(!fp_found && app->fingerprint_num < 64) {
+                    fp_idx = app->fingerprint_num;
+                    app->fingerprints[fp_idx] = fp;
+                    app->fingerprint_counts[fp_idx] = 1;
+                    app->fingerprint_num++;
+                }
+
+                // Push fingerprint data into view model
+                ScanViewModel* vm = (ScanViewModel*)view_get_model(app->scanning_view);
+                if(vm) {
+                    vm->seen_before = fp_found;
+                    vm->seen_count  = fp_found ? app->fingerprint_counts[fp_idx] : 1;
+                }
+                view_commit_model(app->scanning_view, false);
 
                 furi_mutex_acquire(app->data_mutex, FuriWaitForever);
                 app->analyzing = false;

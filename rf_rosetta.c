@@ -27,6 +27,7 @@ static void (*const scene_on_enter[])(void*) = {
     rf_rosetta_scene_details_on_enter,
     rf_rosetta_scene_saved_on_enter,
     rf_rosetta_scene_settings_on_enter,
+    rf_rosetta_scene_about_on_enter,
 };
 
 static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
@@ -36,6 +37,7 @@ static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
     rf_rosetta_scene_details_on_event,
     rf_rosetta_scene_saved_on_event,
     rf_rosetta_scene_settings_on_event,
+    rf_rosetta_scene_about_on_event,
 };
 
 static void (*const scene_on_exit[])(void*) = {
@@ -45,6 +47,7 @@ static void (*const scene_on_exit[])(void*) = {
     rf_rosetta_scene_details_on_exit,
     rf_rosetta_scene_saved_on_exit,
     rf_rosetta_scene_settings_on_exit,
+    rf_rosetta_scene_about_on_exit,
 };
 
 const SceneManagerHandlers rf_rosetta_scene_handlers = {

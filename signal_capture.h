@@ -90,6 +90,9 @@ float signal_capture_noise_floor(SignalCaptureCtx* ctx);
 // Fills `out`. Call after signal_capture_poll_rssi exceeds threshold.
 bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out);
 
+// Returns false if external device was requested but not found (fell back to internal)
+bool signal_capture_antenna_ok(const SignalCaptureCtx* ctx);
+
 // Advance the sweep to the next frequency in the table
 uint32_t signal_capture_next_freq(SignalCaptureCtx* ctx);
 

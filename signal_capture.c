@@ -3,7 +3,16 @@
 #include <furi_hal.h>
 #include <furi_hal_subghz.h>
 #include <furi_hal_gpio.h>
+#include <lib/subghz/devices/devices.h>
 #include <string.h>
+
+// Device names for internal and external CC1101
+#ifndef SUBGHZ_DEVICE_CC1101_INT_NAME
+#define SUBGHZ_DEVICE_CC1101_INT_NAME "cc1101_int"
+#endif
+#ifndef SUBGHZ_DEVICE_CC1101_EXT_NAME
+#define SUBGHZ_DEVICE_CC1101_EXT_NAME "cc1101_ext"
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Frequency sweep table
@@ -68,12 +77,14 @@ static void rx_callback(bool level, uint32_t duration, void* context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct SignalCaptureCtx {
-    ScanMode    mode;
-    AntennaMode antenna;
-    uint32_t    frequency;
-    float       threshold;
-    uint16_t    sweep_index;
-    bool        running;
+    ScanMode             mode;
+    AntennaMode          antenna;      // what was requested
+    bool                 antenna_ok;   // false if external device not found
+    uint32_t             frequency;
+    float                threshold;
+    uint16_t             sweep_index;
+    bool                 running;
+    const SubGhzDevice*  device;       // active CC1101 device handle
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,26 +103,7 @@ float rssi_history_get(const RSSIHistory* h, uint8_t index) {
     return h->values[pos];
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Antenna switching via GPIO
-//
-// IMPORTANT: gpio_ext_pa7 is the CC1101 SPI MOSI line — using it as a GPIO
-// while the radio is active corrupts SPI transfers and silently breaks RF.
-// We use gpio_ext_pa6 (external header pin 12) instead, which is a safe
-// general-purpose output that does not conflict with the SubGHz bus.
-//
-// Wire your external antenna switch signal to Flipper header pin 12 (PA6).
-// High = external antenna active. Low = internal antenna.
-//
-// If your switch uses a different pin, update RF_ROSETTA_ANTENNA_GPIO_PIN
-// in signal_capture.h.
-// ─────────────────────────────────────────────────────────────────────────────
-
-static void apply_antenna(AntennaMode ant) {
-    const GpioPin* pin = RF_ROSETTA_ANTENNA_GPIO_PIN;
-    furi_hal_gpio_init(pin, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_write(pin, (ant == AntennaExternal));
-}
+// (Antenna selection is now handled via subghz_devices — see signal_capture_start)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context lifecycle
@@ -122,10 +114,12 @@ SignalCaptureCtx* signal_capture_alloc(void) {
     furi_assert(ctx);
     ctx->mode         = ScanModeSubGHz;
     ctx->antenna      = AntennaInternal;
+    ctx->antenna_ok   = true;
     ctx->frequency    = 0;
     ctx->threshold    = SIGNAL_THRESHOLD_DBM;
     ctx->sweep_index  = 0;
     ctx->running      = false;
+    ctx->device       = NULL;
     memset(&s_raw, 0, sizeof(s_raw));
     return ctx;
 }
@@ -141,8 +135,9 @@ void signal_capture_set_mode(SignalCaptureCtx* ctx, ScanMode mode) {
 }
 
 void signal_capture_set_antenna(SignalCaptureCtx* ctx, AntennaMode antenna) {
+    // Device is selected in signal_capture_start based on this setting.
+    // Changing it while running requires a restart.
     ctx->antenna = antenna;
-    apply_antenna(antenna);
 }
 
 void signal_capture_set_frequency(SignalCaptureCtx* ctx, uint32_t freq_hz) {
@@ -160,66 +155,59 @@ void signal_capture_set_threshold(SignalCaptureCtx* ctx, float threshold_dbm) {
 bool signal_capture_start(SignalCaptureCtx* ctx) {
     if(ctx->running) return true;
 
-    furi_hal_subghz_reset();
-    furi_hal_subghz_idle();
+    // ── Device selection ──────────────────────────────────────────────────────
+    // Use the SubGhz device abstraction so both the built-in CC1101 and an
+    // external CC1101 (e.g. dev board) work transparently.
+    // "cc1101_ext" is only available when the external module is connected.
+    const char* dev_name = (ctx->antenna == AntennaExternal)
+        ? SUBGHZ_DEVICE_CC1101_EXT_NAME
+        : SUBGHZ_DEVICE_CC1101_INT_NAME;
 
-    // Apply mode-specific CC1101 preset using furi_hal_subghz_load_custom_preset.
-    // Each array is {register_address, value} pairs terminated by {0,0}.
-    // OOK650: standard OOK, 650 kHz BW — best for remotes and sensors
-    // FSK238: narrow 2-FSK, 238 kHz deviation — better sensitivity for FSK
-    // FSK476: wider 2-FSK, 476 kHz deviation — catches more FSK signal types
-    static const uint8_t preset_ook650[] = {
-        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
-        0x14, 0x00, 0x13, 0x00, 0x12, 0x30, 0x11, 0x32,
-        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
-        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
-    };
-    static const uint8_t preset_fsk238[] = {
-        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
-        0x14, 0x00, 0x13, 0x00, 0x12, 0x0C, 0x11, 0x32,
-        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
-        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
-    };
-    static const uint8_t preset_fsk476[] = {
-        0x02, 0x0D, 0x03, 0x07, 0x08, 0x32, 0x0B, 0x06,
-        0x14, 0x00, 0x13, 0x00, 0x12, 0x0E, 0x11, 0x32,
-        0x10, 0x17, 0x18, 0x18, 0x19, 0x18, 0x1D, 0x91,
-        0x1C, 0x00, 0x1B, 0x07, 0x00, 0x00,
-    };
-
-    switch(ctx->mode) {
-        case ScanModeRFNarrow:
-            furi_hal_subghz_load_custom_preset(preset_fsk238);
-            break;
-        case ScanModeRFWide:
-            furi_hal_subghz_load_custom_preset(preset_fsk476);
-            break;
-        case ScanModeSubGHz:
-        default:
-            furi_hal_subghz_load_custom_preset(preset_ook650);
-            break;
+    ctx->device = subghz_devices_get_by_name(dev_name);
+    if(!ctx->device && ctx->antenna == AntennaExternal) {
+        // External module not found — fall back silently to internal
+        ctx->device     = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
+        ctx->antenna_ok = false;  // caller can show "EXT not found" warning
+    } else {
+        ctx->antenna_ok = (ctx->device != NULL);
     }
+    if(!ctx->device) return false;
+
+    // ── Radio init ────────────────────────────────────────────────────────────
+    subghz_devices_begin(ctx->device);
+    subghz_devices_reset(ctx->device);
+    subghz_devices_idle(ctx->device);
+
+    // ── Mode preset ───────────────────────────────────────────────────────────
+    // OOK650  — standard OOK, 650 kHz BW — best for remotes, doorbells, sensors
+    // FSK238  — narrow 2-FSK, 238 kHz dev — better sensitivity, less noise
+    // FSK476  — wider  2-FSK, 476 kHz dev — catches more FSK signal types
+    FuriHalSubGhzPreset preset;
+    switch(ctx->mode) {
+        case ScanModeRFNarrow: preset = FuriHalSubGhzPreset2FSKDev238Async; break;
+        case ScanModeRFWide:   preset = FuriHalSubGhzPreset2FSKDev476Async; break;
+        default:               preset = FuriHalSubGhzPresetOok650Async;     break;
+    }
+    subghz_devices_load_preset(ctx->device, preset, NULL);
 
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
-    furi_hal_subghz_set_frequency_and_path(freq);
-    furi_hal_subghz_rx();
-
-    // Apply antenna GPIO LAST — after all radio init so the pin state isn't
-    // reset by furi_hal_subghz_reset() or load_custom_preset above.
-    apply_antenna(ctx->antenna);
+    subghz_devices_set_frequency(ctx->device, freq);
+    subghz_devices_set_rx(ctx->device);
 
     ctx->running = true;
     return true;
 }
 
 void signal_capture_stop(SignalCaptureCtx* ctx) {
-    if(!ctx->running) return;
+    if(!ctx->running || !ctx->device) return;
     if(s_raw.capturing) {
-        furi_hal_subghz_stop_async_rx();
+        subghz_devices_stop_async_rx(ctx->device);
         s_raw.capturing = false;
     }
-    furi_hal_subghz_idle();
-    furi_hal_subghz_sleep();
+    subghz_devices_idle(ctx->device);
+    subghz_devices_sleep(ctx->device);
+    subghz_devices_end(ctx->device);
+    ctx->device  = NULL;
     ctx->running = false;
 }
 
@@ -228,28 +216,30 @@ void signal_capture_stop(SignalCaptureCtx* ctx) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
-    if(!ctx->running) return -120.0f;
-    return furi_hal_subghz_get_rssi();
+    if(!ctx->running || !ctx->device) return -120.0f;
+    return subghz_devices_get_rssi(ctx->device);
 }
 
 float signal_capture_noise_floor(SignalCaptureCtx* ctx) {
+    if(!ctx->device) return -90.0f;
     float    total   = 0.0f;
     uint16_t samples = 0;
     uint8_t  limit   = 8;
 
-    furi_hal_subghz_idle();
+    subghz_devices_idle(ctx->device);
     for(uint16_t i = 0; i < SWEEP_FREQ_COUNT && i < limit; i++) {
-        furi_hal_subghz_set_frequency_and_path(SWEEP_FREQUENCIES[i]);
-        furi_hal_subghz_rx();
+        subghz_devices_set_frequency(ctx->device, SWEEP_FREQUENCIES[i]);
+        subghz_devices_set_rx(ctx->device);
         furi_delay_ms(20);
-        total += furi_hal_subghz_get_rssi();
+        total += subghz_devices_get_rssi(ctx->device);
         samples++;
-        furi_hal_subghz_idle();
+        subghz_devices_idle(ctx->device);
     }
 
+    // Restore original frequency and RX mode
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
-    furi_hal_subghz_set_frequency_and_path(freq);
-    furi_hal_subghz_rx();
+    subghz_devices_set_frequency(ctx->device, freq);
+    subghz_devices_set_rx(ctx->device);
 
     return samples > 0 ? total / (float)samples : -90.0f;
 }
@@ -312,15 +302,15 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     memset(out, 0, sizeof(SignalCapture));
 
     out->frequency   = ctx->frequency > 0 ? ctx->frequency : signal_capture_current_freq(ctx);
-    out->rssi        = furi_hal_subghz_get_rssi();
+    out->rssi        = subghz_devices_get_rssi(ctx->device);
     out->noise_floor = signal_capture_noise_floor(ctx);
     out->snr         = out->rssi - out->noise_floor;
 
     memset(&s_raw, 0, sizeof(s_raw));
     s_raw.capturing = true;
-    furi_hal_subghz_start_async_rx(rx_callback, NULL);
+    subghz_devices_start_async_rx(ctx->device, rx_callback, NULL);
     furi_delay_ms(CAPTURE_TIMEOUT_MS);
-    furi_hal_subghz_stop_async_rx();
+    subghz_devices_stop_async_rx(ctx->device);
     s_raw.capturing = false;
 
     if(s_raw.count < MIN_PULSE_COUNT) return false;
@@ -352,7 +342,7 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     out->repeating         = detect_repetition(out->raw_pulses, copy_count, &out->repeat_count);
     out->fixed_code_likely = is_fixed_code_heuristic(out->raw_pulses, copy_count);
 
-    furi_hal_subghz_rx();
+    subghz_devices_set_rx(ctx->device);
     return true;
 }
 
@@ -363,9 +353,11 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
 uint32_t signal_capture_next_freq(SignalCaptureCtx* ctx) {
     ctx->sweep_index = (ctx->sweep_index + 1) % SWEEP_FREQ_COUNT;
     uint32_t freq    = SWEEP_FREQUENCIES[ctx->sweep_index];
-    furi_hal_subghz_idle();
-    furi_hal_subghz_set_frequency_and_path(freq);
-    furi_hal_subghz_rx();
+    if(ctx->device && ctx->running) {
+        subghz_devices_idle(ctx->device);
+        subghz_devices_set_frequency(ctx->device, freq);
+        subghz_devices_set_rx(ctx->device);
+    }
     return freq;
 }
 
@@ -373,3 +365,4 @@ uint32_t signal_capture_current_freq(SignalCaptureCtx* ctx) {
     if(ctx->frequency > 0) return ctx->frequency;
     return SWEEP_FREQUENCIES[ctx->sweep_index];
 }
+bool signal_capture_antenna_ok(const SignalCaptureCtx* ctx) { return ctx->antenna_ok; }

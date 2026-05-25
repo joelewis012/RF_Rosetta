@@ -60,6 +60,18 @@ static void logging_change(VariableItem* item) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Enter callback — handles OK press on a settings item (e.g. About)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void settings_enter_cb(void* ctx, uint32_t index) {
+    RFRosettaApp* app = ctx;
+    // Index 4 = "About RF Rosetta"
+    if(index == 4) {
+        scene_manager_next_scene(app->scene_manager, RFRosettaSceneAbout);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scene lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -96,6 +108,11 @@ void rf_rosetta_scene_settings_on_enter(void* ctx) {
     uint8_t log_idx = app->logging_enabled ? 1 : 0;
     variable_item_set_current_value_index(item, log_idx);
     variable_item_set_current_value_text(item, LOG_LABELS[log_idx]);
+
+    // About (navigates to about scene on OK press)
+    variable_item_list_add(app->var_list, "About RF Rosetta", 0, NULL, app);
+
+    variable_item_list_set_enter_callback(app->var_list, settings_enter_cb, app);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewVarList);
 }
