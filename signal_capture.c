@@ -2,17 +2,7 @@
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_hal_subghz.h>
-#include <furi_hal_gpio.h>
-#include <lib/subghz/devices/devices.h>
 #include <string.h>
-
-// Device names for internal and external CC1101
-#ifndef SUBGHZ_DEVICE_CC1101_INT_NAME
-#define SUBGHZ_DEVICE_CC1101_INT_NAME "cc1101_int"
-#endif
-#ifndef SUBGHZ_DEVICE_CC1101_EXT_NAME
-#define SUBGHZ_DEVICE_CC1101_EXT_NAME "cc1101_ext"
-#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Frequency sweep table
@@ -77,14 +67,13 @@ static void rx_callback(bool level, uint32_t duration, void* context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct SignalCaptureCtx {
-    ScanMode             mode;
-    AntennaMode          antenna;      // what was requested
-    bool                 antenna_ok;   // false if external device not found
-    uint32_t             frequency;
-    float                threshold;
-    uint16_t             sweep_index;
-    bool                 running;
-    const SubGhzDevice*  device;       // active CC1101 device handle
+    ScanMode    mode;
+    AntennaMode antenna;
+    bool        antenna_ok;   // always true for HAL-based internal CC1101
+    uint32_t    frequency;
+    float       threshold;
+    uint16_t    sweep_index;
+    bool        running;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,7 +108,6 @@ SignalCaptureCtx* signal_capture_alloc(void) {
     ctx->threshold    = SIGNAL_THRESHOLD_DBM;
     ctx->sweep_index  = 0;
     ctx->running      = false;
-    ctx->device       = NULL;
     memset(&s_raw, 0, sizeof(s_raw));
     return ctx;
 }
@@ -155,96 +143,66 @@ void signal_capture_set_threshold(SignalCaptureCtx* ctx, float threshold_dbm) {
 bool signal_capture_start(SignalCaptureCtx* ctx) {
     if(ctx->running) return true;
 
-    // ── Device selection ──────────────────────────────────────────────────────
-    // Use the SubGhz device abstraction so both the built-in CC1101 and an
-    // external CC1101 (e.g. dev board) work transparently.
-    // "cc1101_ext" is only available when the external module is connected.
-    const char* dev_name = (ctx->antenna == AntennaExternal)
-        ? SUBGHZ_DEVICE_CC1101_EXT_NAME
-        : SUBGHZ_DEVICE_CC1101_INT_NAME;
+    furi_hal_subghz_reset();
+    furi_hal_subghz_idle();
 
-    ctx->device = subghz_devices_get_by_name(dev_name);
-    if(!ctx->device && ctx->antenna == AntennaExternal) {
-        // External module not found — fall back silently to internal
-        ctx->device     = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
-        ctx->antenna_ok = false;
-    } else {
-        ctx->antenna_ok = (ctx->device != NULL);
-    }
-    // Hard guard — if we still have no device something is seriously wrong
-    if(!ctx->device) {
-        FURI_LOG_E("RFRosetta", "No CC1101 device found");
-        return false;
-    }
-
-    // ── Radio init ────────────────────────────────────────────────────────────
-    subghz_devices_begin(ctx->device);
-    subghz_devices_reset(ctx->device);
-    subghz_devices_idle(ctx->device);
-
-    // ── Mode preset ───────────────────────────────────────────────────────────
-    // OOK650  — standard OOK, 650 kHz BW — best for remotes, doorbells, sensors
-    // FSK238  — narrow 2-FSK, 238 kHz dev — better sensitivity, less noise
-    // FSK476  — wider  2-FSK, 476 kHz dev — catches more FSK signal types
+    // Mode-specific CC1101 preset
+    // OOK650  - standard OOK 650 kHz BW - remotes, doorbells, sensors
+    // FSK238  - narrow 2-FSK 238 kHz dev - TPMS, weather, meters
+    // FSK476  - wider  2-FSK 476 kHz dev - industrial FSK
     FuriHalSubGhzPreset preset;
     switch(ctx->mode) {
         case ScanModeRFNarrow: preset = FuriHalSubGhzPreset2FSKDev238Async; break;
         case ScanModeRFWide:   preset = FuriHalSubGhzPreset2FSKDev476Async; break;
         default:               preset = FuriHalSubGhzPresetOok650Async;     break;
     }
-    subghz_devices_load_preset(ctx->device, preset, NULL);
+    furi_hal_subghz_load_preset(preset);
 
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
-    subghz_devices_set_frequency(ctx->device, freq);
-    subghz_devices_set_rx(ctx->device);
+    furi_hal_subghz_set_frequency_and_path(freq);
+    furi_hal_subghz_rx();
 
-    ctx->running = true;
+    // External antenna note: subghz_devices API for cc1101_ext is not exported
+    // in the FAP SDK link stage. External CC1101 dev board support requires
+    // firmware-level integration. For now antenna setting affects display only.
+    ctx->antenna_ok = true;
+    ctx->running    = true;
     return true;
 }
 
 void signal_capture_stop(SignalCaptureCtx* ctx) {
-    if(!ctx->running || !ctx->device) return;
+    if(!ctx->running) return;
     if(s_raw.capturing) {
-        subghz_devices_stop_async_rx(ctx->device);
+        furi_hal_subghz_stop_async_rx();
         s_raw.capturing = false;
     }
-    subghz_devices_idle(ctx->device);
-    subghz_devices_sleep(ctx->device);
-    subghz_devices_end(ctx->device);
-    ctx->device  = NULL;
+    furi_hal_subghz_idle();
+    furi_hal_subghz_sleep();
     ctx->running = false;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RSSI polling
-// ─────────────────────────────────────────────────────────────────────────────
-
 float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
-    if(!ctx->running || !ctx->device) return -120.0f;
-    return subghz_devices_get_rssi(ctx->device);
+    if(!ctx->running) return -120.0f;
+    return furi_hal_subghz_get_rssi();
 }
 
 float signal_capture_noise_floor(SignalCaptureCtx* ctx) {
-    if(!ctx->device) return -90.0f;
     float    total   = 0.0f;
     uint16_t samples = 0;
     uint8_t  limit   = 8;
 
-    subghz_devices_idle(ctx->device);
+    furi_hal_subghz_idle();
     for(uint16_t i = 0; i < SWEEP_FREQ_COUNT && i < limit; i++) {
-        subghz_devices_set_frequency(ctx->device, SWEEP_FREQUENCIES[i]);
-        subghz_devices_set_rx(ctx->device);
+        furi_hal_subghz_set_frequency_and_path(SWEEP_FREQUENCIES[i]);
+        furi_hal_subghz_rx();
         furi_delay_ms(20);
-        total += subghz_devices_get_rssi(ctx->device);
+        total += furi_hal_subghz_get_rssi();
         samples++;
-        subghz_devices_idle(ctx->device);
+        furi_hal_subghz_idle();
     }
-
-    // Restore original frequency and RX mode
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
-    subghz_devices_set_frequency(ctx->device, freq);
-    subghz_devices_set_rx(ctx->device);
-
+    furi_hal_subghz_set_frequency_and_path(freq);
+    furi_hal_subghz_rx();
     return samples > 0 ? total / (float)samples : -90.0f;
 }
 
@@ -306,15 +264,15 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     memset(out, 0, sizeof(SignalCapture));
 
     out->frequency   = ctx->frequency > 0 ? ctx->frequency : signal_capture_current_freq(ctx);
-    out->rssi        = subghz_devices_get_rssi(ctx->device);
+    out->rssi        = furi_hal_subghz_get_rssi();
     out->noise_floor = signal_capture_noise_floor(ctx);
     out->snr         = out->rssi - out->noise_floor;
 
     memset(&s_raw, 0, sizeof(s_raw));
     s_raw.capturing = true;
-    subghz_devices_start_async_rx(ctx->device, rx_callback, NULL);
+    furi_hal_subghz_start_async_rx(rx_callback, NULL);
     furi_delay_ms(CAPTURE_TIMEOUT_MS);
-    subghz_devices_stop_async_rx(ctx->device);
+    furi_hal_subghz_stop_async_rx();
     s_raw.capturing = false;
 
     if(s_raw.count < MIN_PULSE_COUNT) return false;
@@ -346,22 +304,16 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     out->repeating         = detect_repetition(out->raw_pulses, copy_count, &out->repeat_count);
     out->fixed_code_likely = is_fixed_code_heuristic(out->raw_pulses, copy_count);
 
-    subghz_devices_set_rx(ctx->device);
+    furi_hal_subghz_rx();
     return true;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sweep
-// ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t signal_capture_next_freq(SignalCaptureCtx* ctx) {
     ctx->sweep_index = (ctx->sweep_index + 1) % SWEEP_FREQ_COUNT;
     uint32_t freq    = SWEEP_FREQUENCIES[ctx->sweep_index];
-    if(ctx->device && ctx->running) {
-        subghz_devices_idle(ctx->device);
-        subghz_devices_set_frequency(ctx->device, freq);
-        subghz_devices_set_rx(ctx->device);
-    }
+    furi_hal_subghz_idle();
+    furi_hal_subghz_set_frequency_and_path(freq);
+    furi_hal_subghz_rx();
     return freq;
 }
 
