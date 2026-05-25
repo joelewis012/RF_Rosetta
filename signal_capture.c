@@ -121,18 +121,12 @@ SignalCaptureCtx* signal_capture_alloc(void) {
     ctx->running      = false;
     ctx->device       = NULL;
     memset(&s_raw, 0, sizeof(s_raw));
-
-    // Must initialise the device registry before calling subghz_devices_get_by_name.
-    // Without this, get_by_name returns NULL and begin/reset crash with furi_check.
-    subghz_devices_init();
-
     return ctx;
 }
 
 void signal_capture_free(SignalCaptureCtx* ctx) {
     if(!ctx) return;
     signal_capture_stop(ctx);
-    subghz_devices_deinit();
     free(ctx);
 }
 
@@ -179,7 +173,7 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     }
     // Hard guard — if we still have no device something is seriously wrong
     if(!ctx->device) {
-        FURI_LOG_E("RFRosetta", "No CC1101 device found — cannot start capture");
+        FURI_LOG_E("RFRosetta", "No CC1101 device found");
         return false;
     }
 
