@@ -121,12 +121,18 @@ SignalCaptureCtx* signal_capture_alloc(void) {
     ctx->running      = false;
     ctx->device       = NULL;
     memset(&s_raw, 0, sizeof(s_raw));
+
+    // Must initialise the device registry before calling subghz_devices_get_by_name.
+    // Without this, get_by_name returns NULL and begin/reset crash with furi_check.
+    subghz_devices_init();
+
     return ctx;
 }
 
 void signal_capture_free(SignalCaptureCtx* ctx) {
     if(!ctx) return;
     signal_capture_stop(ctx);
+    subghz_devices_deinit();
     free(ctx);
 }
 
@@ -167,11 +173,15 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     if(!ctx->device && ctx->antenna == AntennaExternal) {
         // External module not found — fall back silently to internal
         ctx->device     = subghz_devices_get_by_name(SUBGHZ_DEVICE_CC1101_INT_NAME);
-        ctx->antenna_ok = false;  // caller can show "EXT not found" warning
+        ctx->antenna_ok = false;
     } else {
         ctx->antenna_ok = (ctx->device != NULL);
     }
-    if(!ctx->device) return false;
+    // Hard guard — if we still have no device something is seriously wrong
+    if(!ctx->device) {
+        FURI_LOG_E("RFRosetta", "No CC1101 device found — cannot start capture");
+        return false;
+    }
 
     // ── Radio init ────────────────────────────────────────────────────────────
     subghz_devices_begin(ctx->device);
