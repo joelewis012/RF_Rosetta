@@ -146,17 +146,31 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     furi_hal_subghz_reset();
     furi_hal_subghz_idle();
 
-    // Mode-specific CC1101 preset
-    // OOK650  - standard OOK 650 kHz BW - remotes, doorbells, sensors
-    // FSK238  - narrow 2-FSK 238 kHz dev - TPMS, weather, meters
-    // FSK476  - wider  2-FSK 476 kHz dev - industrial FSK
-    FuriHalSubGhzPreset preset;
+    // furi_hal_subghz_load_preset() does not exist in this SDK version.
+    // Must use furi_hal_subghz_load_custom_preset() with raw CC1101 register arrays.
+    static const uint8_t preset_ook650[] = {
+        0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+        0x14,0x00, 0x13,0x00, 0x12,0x30, 0x11,0x32,
+        0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+        0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+    };
+    static const uint8_t preset_fsk238[] = {
+        0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+        0x14,0x00, 0x13,0x00, 0x12,0x0C, 0x11,0x32,
+        0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+        0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+    };
+    static const uint8_t preset_fsk476[] = {
+        0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+        0x14,0x00, 0x13,0x00, 0x12,0x0E, 0x11,0x32,
+        0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+        0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+    };
     switch(ctx->mode) {
-        case ScanModeRFNarrow: preset = FuriHalSubGhzPreset2FSKDev238Async; break;
-        case ScanModeRFWide:   preset = FuriHalSubGhzPreset2FSKDev476Async; break;
-        default:               preset = FuriHalSubGhzPresetOok650Async;     break;
+        case ScanModeRFNarrow: furi_hal_subghz_load_custom_preset(preset_fsk238); break;
+        case ScanModeRFWide:   furi_hal_subghz_load_custom_preset(preset_fsk476); break;
+        default:               furi_hal_subghz_load_custom_preset(preset_ook650); break;
     }
-    furi_hal_subghz_load_preset(preset);
 
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
     furi_hal_subghz_set_frequency_and_path(freq);
