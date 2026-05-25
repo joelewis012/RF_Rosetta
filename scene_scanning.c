@@ -51,10 +51,13 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 8, "RF ROSETTA");
 
-    // Mode label — 3-char abbreviation keeps it from overlapping app name
+    // Mode label at x=68 — clear of "RF ROSETTA" which ends ~x=62
+    // SubGHz = OOK preset (On-Off Keying) — best for remotes/sensors
+    // Narrow = FSK narrow deviation — TPMS, weather stations
+    // Wide   = FSK wide deviation   — industrial, pagers
     const char* mode_str = "OOK";
-    if(m->mode == ScanModeRFNarrow) mode_str = "FSK";
-    if(m->mode == ScanModeRFWide)   mode_str = "WID";
+    if(m->mode == ScanModeRFNarrow) mode_str = "FSK-N";
+    if(m->mode == ScanModeRFWide)   mode_str = "FSK-W";
     canvas_draw_str(canvas, 68, 8, mode_str);
 
     // Antenna badge — right-aligned, inverted+warning when external missing
@@ -115,15 +118,22 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
         canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 62, 38, rssi_str);
 
-        // Trend arrow — drawn just to the right of the RSSI value
+        // Trend indicator — drawn with lines since canvas_draw_triangle
+        // doesn't exist in this SDK version
         if(m->rssi_trend > 0) {
-            // Upward triangle (stronger)
-            canvas_draw_triangle(canvas, 118, 32, 4, 5, CanvasDirectionTopToBottom);
+            // Up arrow ▲ — signal getting stronger
+            canvas_draw_line(canvas, 118, 33, 115, 37);
+            canvas_draw_line(canvas, 118, 33, 121, 37);
+            canvas_draw_line(canvas, 115, 37, 121, 37);
+            canvas_draw_line(canvas, 118, 34, 118, 37);
         } else if(m->rssi_trend < 0) {
-            // Downward triangle (weaker)
-            canvas_draw_triangle(canvas, 118, 37, 4, 5, CanvasDirectionBottomToTop);
+            // Down arrow ▼ — signal getting weaker
+            canvas_draw_line(canvas, 118, 37, 115, 33);
+            canvas_draw_line(canvas, 118, 37, 121, 33);
+            canvas_draw_line(canvas, 115, 33, 121, 33);
+            canvas_draw_line(canvas, 118, 33, 118, 36);
         } else {
-            // Steady — small dash
+            // Steady — dash
             canvas_draw_line(canvas, 115, 35, 121, 35);
         }
 
@@ -259,11 +269,46 @@ static void scan_timer_cb(void* ctx) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// External board mode reminder
+// Shown via the Widget view (already registered) when External antenna is
+// selected, reminding the user to set their 3-in-1 board to CC1101 mode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static void ext_reminder_ok_cb(GuiButtonType result, InputType type, void* context) {
+    if(type != InputTypeShort) return;
+    RFRosettaApp* app = context;
+    if(result == GuiButtonTypeRight) {
+        // User acknowledged — proceed to scanning view
+        view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewScanning);
+    } else {
+        // Back — return to main menu
+        scene_manager_previous_scene(app->scene_manager);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scene lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
 void rf_rosetta_scene_scanning_on_enter(void* ctx) {
     RFRosettaApp* app = (RFRosettaApp*)ctx;
+
+    // ── External board reminder ───────────────────────────────────────────────
+    // If External antenna is selected, show a Widget popup reminding the user
+    // to set their 3-in-1 dev board to CC1101 mode before scanning.
+    // The user presses OK to continue or Back to cancel.
+    if(app->antenna == AntennaExternal) {
+        widget_reset(app->widget);
+        widget_add_string_element(app->widget, 64, 3,  AlignCenter, AlignTop, FontSecondary, "3-in-1 Board Detected");
+        widget_add_string_element(app->widget, 64, 15, AlignCenter, AlignTop, FontSecondary, "RF Rosetta uses the");
+        widget_add_string_element(app->widget, 64, 25, AlignCenter, AlignTop, FontSecondary, "high-gain CC1101.");
+        widget_add_string_element(app->widget, 64, 36, AlignCenter, AlignTop, FontSecondary, "WiFi+NRF need other");
+        widget_add_string_element(app->widget, 64, 46, AlignCenter, AlignTop, FontSecondary, "apps (Marauder etc).");
+        widget_add_button_element(app->widget, GuiButtonTypeLeft,  "Back", ext_reminder_ok_cb, app);
+        widget_add_button_element(app->widget, GuiButtonTypeRight, "Scan", ext_reminder_ok_cb, app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
+        return;
+    }
 
     app->signal_detected = false;
     app->analyzing       = false;

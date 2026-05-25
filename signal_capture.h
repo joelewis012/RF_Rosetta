@@ -19,14 +19,9 @@ typedef enum {
 // ─────────────────────────────────────────────────────────────────────────────
 
 typedef enum {
-    AntennaInternal,  // Built-in Flipper antenna
-    AntennaExternal,  // External via GPIO pin
+    AntennaInternal,  // Built-in Flipper antenna (always works)
+    AntennaExternal,  // External CC1101 dev board (display only — SDK limitation)
 } AntennaMode;
-
-// GPIO pin used to switch to external antenna (active HIGH).
-// PA6 = external header pin 12 — safe general-purpose output.
-// PA7 must NOT be used here — it is the CC1101 SPI MOSI line.
-#define RF_ROSETTA_ANTENNA_GPIO_PIN (&gpio_ext_pa6)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scan frequency sweep table
