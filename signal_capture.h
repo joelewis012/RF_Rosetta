@@ -9,9 +9,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 typedef enum {
-    ScanModeSubGHz,    // 300–928 MHz, OOK preset, standard sensitivity
-    ScanModeRFNarrow,  // Narrow bandwidth — better sensitivity, misses wideband
-    ScanModeRFWide,    // Wide bandwidth  — catches more, noisier
+    ScanModeAll,       // DEFAULT: cycles OOK → FSK-N → FSK-W per frequency tick
+    ScanModeSubGHz,    // OOK 650kHz only  — remotes, sensors
+    ScanModeRFNarrow,  // FSK narrow only  — TPMS, weather stations
+    ScanModeRFWide,    // FSK wide only    — industrial, pagers
 } ScanMode;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +69,11 @@ void signal_capture_set_frequency(SignalCaptureCtx* ctx, uint32_t freq_hz);
 
 // RSSI threshold above which we consider a signal present (dBm)
 void signal_capture_set_threshold(SignalCaptureCtx* ctx, float threshold_dbm);
+
+// Dwell time per frequency in milliseconds (default 300ms)
+// Higher = more sensitive detection, lower = faster sweep coverage
+void signal_capture_set_dwell(SignalCaptureCtx* ctx, uint16_t dwell_ms);
+uint16_t signal_capture_get_dwell(const SignalCaptureCtx* ctx);
 
 // Start passive listening — call this once, then poll
 bool signal_capture_start(SignalCaptureCtx* ctx);

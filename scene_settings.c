@@ -5,8 +5,8 @@
 // Scan Mode setting
 // ─────────────────────────────────────────────────────────────────────────────
 
-static const char* SCAN_MODE_LABELS[] = {"Sub-GHz", "RF Narrow", "RF Wide"};
-static const uint8_t SCAN_MODE_COUNT = 3;
+static const char* SCAN_MODE_LABELS[] = {"All (OOK+FSK)", "OOK only", "FSK Narrow", "FSK Wide"};
+static const uint8_t SCAN_MODE_COUNT = 4;
 
 static void scan_mode_change(VariableItem* item) {
     RFRosettaApp* app    = variable_item_get_context(item);

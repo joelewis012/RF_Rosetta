@@ -69,11 +69,13 @@ static void rx_callback(bool level, uint32_t duration, void* context) {
 struct SignalCaptureCtx {
     ScanMode    mode;
     AntennaMode antenna;
-    bool        antenna_ok;   // always true for HAL-based internal CC1101
+    bool        antenna_ok;
     uint32_t    frequency;
     float       threshold;
     uint16_t    sweep_index;
     bool        running;
+    uint16_t    dwell_ms;       // ms per frequency (default 300)
+    uint8_t     preset_idx;     // for ScanModeAll: 0=OOK 1=FSK-N 2=FSK-W
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,13 +103,15 @@ float rssi_history_get(const RSSIHistory* h, uint8_t index) {
 SignalCaptureCtx* signal_capture_alloc(void) {
     SignalCaptureCtx* ctx = malloc(sizeof(SignalCaptureCtx));
     furi_assert(ctx);
-    ctx->mode         = ScanModeSubGHz;
+    ctx->mode         = ScanModeAll;
     ctx->antenna      = AntennaInternal;
     ctx->antenna_ok   = true;
     ctx->frequency    = 0;
     ctx->threshold    = SIGNAL_THRESHOLD_DBM;
     ctx->sweep_index  = 0;
     ctx->running      = false;
+    ctx->dwell_ms     = 300;
+    ctx->preset_idx   = 0;
     memset(&s_raw, 0, sizeof(s_raw));
     return ctx;
 }
@@ -146,8 +150,8 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
     furi_hal_subghz_reset();
     furi_hal_subghz_idle();
 
-    // furi_hal_subghz_load_preset() does not exist in this SDK version.
-    // Must use furi_hal_subghz_load_custom_preset() with raw CC1101 register arrays.
+    // Preset arrays (addr,val pairs terminated by 0x00,0x00)
+    // Stored static so they're accessible from poll_rssi too
     static const uint8_t preset_ook650[] = {
         0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
         0x14,0x00, 0x13,0x00, 0x12,0x30, 0x11,0x32,
@@ -166,10 +170,15 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
         0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
         0x1C,0x00, 0x1B,0x07, 0x00,0x00,
     };
+
+    ctx->preset_idx = 0;
+
+    // Load initial preset
     switch(ctx->mode) {
+        case ScanModeAll:      // starts with OOK, cycles in poll_rssi
+        case ScanModeSubGHz:   furi_hal_subghz_load_custom_preset(preset_ook650); break;
         case ScanModeRFNarrow: furi_hal_subghz_load_custom_preset(preset_fsk238); break;
         case ScanModeRFWide:   furi_hal_subghz_load_custom_preset(preset_fsk476); break;
-        default:               furi_hal_subghz_load_custom_preset(preset_ook650); break;
     }
 
     uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
@@ -197,6 +206,38 @@ void signal_capture_stop(SignalCaptureCtx* ctx) {
 
 float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
     if(!ctx->running) return -120.0f;
+
+    if(ctx->mode == ScanModeAll) {
+        // Cycle through OOK → FSK-N → FSK-W on each poll call
+        static const uint8_t preset_ook650[] = {
+            0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+            0x14,0x00, 0x13,0x00, 0x12,0x30, 0x11,0x32,
+            0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+            0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+        };
+        static const uint8_t preset_fsk238[] = {
+            0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+            0x14,0x00, 0x13,0x00, 0x12,0x0C, 0x11,0x32,
+            0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+            0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+        };
+        static const uint8_t preset_fsk476[] = {
+            0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
+            0x14,0x00, 0x13,0x00, 0x12,0x0E, 0x11,0x32,
+            0x10,0x17, 0x18,0x18, 0x19,0x18, 0x1D,0x91,
+            0x1C,0x00, 0x1B,0x07, 0x00,0x00,
+        };
+        static const uint8_t* presets[3] = { preset_ook650, preset_fsk238, preset_fsk476 };
+
+        ctx->preset_idx = (ctx->preset_idx + 1) % 3;
+        uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[ctx->sweep_index];
+        furi_hal_subghz_idle();
+        furi_hal_subghz_load_custom_preset(presets[ctx->preset_idx]);
+        furi_hal_subghz_set_frequency_and_path(freq);
+        furi_hal_subghz_rx();
+        furi_delay_ms(8); // settle time after preset switch
+    }
+
     return furi_hal_subghz_get_rssi();
 }
 
@@ -335,4 +376,14 @@ uint32_t signal_capture_current_freq(SignalCaptureCtx* ctx) {
     if(ctx->frequency > 0) return ctx->frequency;
     return SWEEP_FREQUENCIES[ctx->sweep_index];
 }
-bool signal_capture_antenna_ok(const SignalCaptureCtx* ctx) { return ctx->antenna_ok; }
+void signal_capture_set_dwell(SignalCaptureCtx* ctx, uint16_t dwell_ms) {
+    ctx->dwell_ms = dwell_ms < 50 ? 50 : (dwell_ms > 3000 ? 3000 : dwell_ms);
+}
+
+uint16_t signal_capture_get_dwell(const SignalCaptureCtx* ctx) {
+    return ctx->dwell_ms;
+}
+
+bool signal_capture_antenna_ok(const SignalCaptureCtx* ctx) {
+    return ctx->antenna_ok;
+}

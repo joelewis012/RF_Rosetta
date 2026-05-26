@@ -51,13 +51,10 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 8, "RF ROSETTA");
 
-    // Mode label at x=68 — clear of "RF ROSETTA" which ends ~x=62
-    // SubGHz = OOK preset (On-Off Keying) — best for remotes/sensors
-    // Narrow = FSK narrow deviation — TPMS, weather stations
-    // Wide   = FSK wide deviation   — industrial, pagers
-    const char* mode_str = "OOK";
-    if(m->mode == ScanModeRFNarrow) mode_str = "FSK-N";
-    if(m->mode == ScanModeRFWide)   mode_str = "FSK-W";
+    const char* mode_str = "ALL";
+    if(m->mode == ScanModeSubGHz)    mode_str = "OOK";
+    if(m->mode == ScanModeRFNarrow)  mode_str = "FSK-N";
+    if(m->mode == ScanModeRFWide)    mode_str = "FSK-W";
     canvas_draw_str(canvas, 68, 8, mode_str);
 
     // Antenna badge — right-aligned, inverted+warning when external missing
@@ -154,6 +151,9 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 1, 54, m->status_str);
 
+    // Dwell time indicator bottom-right (◄ dwell ►)
+    canvas_draw_str(canvas, 80, 54, m->dwell_str);
+
     // ── Zone 4: Sparkline strip (y 56–63) ────────────────────────────────────
     // Separate from status text — 8 px strip at very bottom
     if(m->history_count > 1) {
@@ -181,8 +181,17 @@ static void scanning_draw_cb(Canvas* canvas, void* model_ptr) {
 
 static bool scanning_input_cb(InputEvent* ev, void* ctx) {
     RFRosettaApp* app = (RFRosettaApp*)ctx;
-    if(ev->type == InputTypeShort && ev->key == InputKeyBack) {
+    if(ev->type != InputTypeShort) return false;
+    if(ev->key == InputKeyBack) {
         view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventBackPressed);
+        return true;
+    }
+    if(ev->key == InputKeyLeft) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventDwellDown);
+        return true;
+    }
+    if(ev->key == InputKeyRight) {
+        view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventDwellUp);
         return true;
     }
     return false;
@@ -243,6 +252,9 @@ static void scan_timer_cb(void* ctx) {
         vm->ext_not_found    = !signal_capture_antenna_ok(app->capture_ctx);
         vm->mode             = app->scan_mode;
 
+        uint16_t dwell = signal_capture_get_dwell(app->capture_ctx);
+        snprintf(vm->dwell_str, sizeof(vm->dwell_str), "%dms", dwell);
+
         // Fingerprint — check session seen count for current signal
         // (populated in the acquire path; just pass through here)
 
@@ -299,11 +311,10 @@ void rf_rosetta_scene_scanning_on_enter(void* ctx) {
     // The user presses OK to continue or Back to cancel.
     if(app->antenna == AntennaExternal) {
         widget_reset(app->widget);
-        widget_add_string_element(app->widget, 64, 3,  AlignCenter, AlignTop, FontSecondary, "3-in-1 Board Detected");
-        widget_add_string_element(app->widget, 64, 15, AlignCenter, AlignTop, FontSecondary, "RF Rosetta uses the");
-        widget_add_string_element(app->widget, 64, 25, AlignCenter, AlignTop, FontSecondary, "high-gain CC1101.");
-        widget_add_string_element(app->widget, 64, 36, AlignCenter, AlignTop, FontSecondary, "WiFi+NRF need other");
-        widget_add_string_element(app->widget, 64, 46, AlignCenter, AlignTop, FontSecondary, "apps (Marauder etc).");
+        widget_add_string_element(app->widget, 64, 4,  AlignCenter, AlignTop, FontSecondary, "External CC1101");
+        widget_add_string_element(app->widget, 64, 16, AlignCenter, AlignTop, FontSecondary, "Using board CC1101.");
+        widget_add_string_element(app->widget, 64, 27, AlignCenter, AlignTop, FontSecondary, "NRF24 + ESP32 modes");
+        widget_add_string_element(app->widget, 64, 38, AlignCenter, AlignTop, FontSecondary, "coming soon.");
         widget_add_button_element(app->widget, GuiButtonTypeLeft,  "Back", ext_reminder_ok_cb, app);
         widget_add_button_element(app->widget, GuiButtonTypeRight, "Scan", ext_reminder_ok_cb, app);
         view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
@@ -350,6 +361,17 @@ bool rf_rosetta_scene_scanning_on_event(void* ctx, SceneManagerEvent ev) {
     if(ev.type == SceneManagerEventTypeCustom) {
         if(ev.event == RFRosettaEventBackPressed) {
             scene_manager_previous_scene(app->scene_manager);
+            return true;
+        }
+        if(ev.event == RFRosettaEventDwellDown) {
+            uint16_t d = signal_capture_get_dwell(app->capture_ctx);
+            if(d > 100) signal_capture_set_dwell(app->capture_ctx, d - 100);
+            else        signal_capture_set_dwell(app->capture_ctx, 50);
+            return true;
+        }
+        if(ev.event == RFRosettaEventDwellUp) {
+            uint16_t d = signal_capture_get_dwell(app->capture_ctx);
+            signal_capture_set_dwell(app->capture_ctx, d + 100);
             return true;
         }
         if(ev.event == RFRosettaEventSignalCaught) {

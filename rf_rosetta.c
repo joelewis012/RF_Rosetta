@@ -28,6 +28,7 @@ static void (*const scene_on_enter[])(void*) = {
     rf_rosetta_scene_saved_on_enter,
     rf_rosetta_scene_settings_on_enter,
     rf_rosetta_scene_about_on_enter,
+    rf_rosetta_scene_nrf24_on_enter,
 };
 
 static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
@@ -38,6 +39,7 @@ static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
     rf_rosetta_scene_saved_on_event,
     rf_rosetta_scene_settings_on_event,
     rf_rosetta_scene_about_on_event,
+    rf_rosetta_scene_nrf24_on_event,
 };
 
 static void (*const scene_on_exit[])(void*) = {
@@ -48,6 +50,7 @@ static void (*const scene_on_exit[])(void*) = {
     rf_rosetta_scene_saved_on_exit,
     rf_rosetta_scene_settings_on_exit,
     rf_rosetta_scene_about_on_exit,
+    rf_rosetta_scene_nrf24_on_exit,
 };
 
 const SceneManagerHandlers rf_rosetta_scene_handlers = {
@@ -114,7 +117,12 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     memset(app, 0, sizeof(RFRosettaApp));
 
     // Defaults
-    app->scan_mode      = ScanModeSubGHz;
+    app->nrf24_view = view_alloc();
+    view_allocate_model(app->nrf24_view, ViewModelTypeLockFree, sizeof(NRF24ViewModel));
+    view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewNRF24, app->nrf24_view);
+
+    app->dwell_ticks  = 3;   // default 300ms per frequency
+    app->nrf24_timer  = NULL;
     app->antenna        = AntennaInternal;
     app->rssi_threshold = -80.0f;
     app->logging_enabled = true;
@@ -186,6 +194,9 @@ static void rf_rosetta_free(RFRosettaApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewWidget);
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewTextBox);
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewVarList);
+    view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewNRF24);
+    view_free(app->nrf24_view);
+
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewScanning);
 
     submenu_free(app->submenu);
