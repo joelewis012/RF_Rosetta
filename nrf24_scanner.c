@@ -1,6 +1,6 @@
 #include "nrf24_scanner.h"
 #include <furi.h>
-#include <furi_hal_gpio.h>
+#include <furi_hal.h>
 #include <string.h>
 
 // ─────────────────────────────────────────────────────────────────────────────

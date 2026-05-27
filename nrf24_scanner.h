@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <furi.h>
+#include <furi_hal.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NRF24 2.4 GHz channel scanner
