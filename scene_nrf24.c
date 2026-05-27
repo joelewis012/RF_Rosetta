@@ -88,16 +88,18 @@ static void nrf24_draw_cb(Canvas* canvas, void* model_ptr) {
 // Input callback
 // ─────────────────────────────────────────────────────────────────────────────
 
-static void nrf24_input_cb(InputEvent* event, void* ctx) {
+static bool nrf24_input_cb(InputEvent* event, void* ctx) {
     RFRosettaApp* app = ctx;
-    if(event->type != InputTypeShort) return;
+    if(event->type != InputTypeShort) return false;
     if(event->key == InputKeyBack) {
         view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventBackPressed);
+        return true;
     }
     if(event->key == InputKeyOk) {
-        // Reset scan counts
         view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventNRF24Reset);
+        return true;
     }
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
