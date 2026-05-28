@@ -117,11 +117,7 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     memset(app, 0, sizeof(RFRosettaApp));
 
     // Defaults
-    app->nrf24_view = view_alloc();
-    view_allocate_model(app->nrf24_view, ViewModelTypeLockFree, sizeof(NRF24ViewModel));
-    view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewNRF24, app->nrf24_view);
-
-    app->dwell_ticks  = 3;   // default 300ms per frequency
+    app->dwell_ticks  = 3;
     app->nrf24_timer  = NULL;
     app->antenna        = AntennaInternal;
     app->rssi_threshold = -80.0f;
@@ -163,6 +159,11 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     // causes a furi_check failure on every re-entry (e.g. after Settings → Scan).
     view_allocate_model(app->scanning_view, ViewModelTypeLockFree, sizeof(ScanViewModel));
     view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewScanning, app->scanning_view);
+
+    // NRF24 view — must come AFTER view_dispatcher is allocated
+    app->nrf24_view = view_alloc();
+    view_allocate_model(app->nrf24_view, ViewModelTypeLockFree, sizeof(NRF24ViewModel));
+    view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewNRF24, app->nrf24_view);
 
     // Mutex for sharing signal data between timer and UI
     app->data_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
