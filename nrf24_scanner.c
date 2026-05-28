@@ -92,8 +92,15 @@ void nrf24_scanner_init(void) {
     nrf24_write_reg(NRF_REG_EN_RXADDR, 0x00);
 }
 
-void nrf24_scanner_deinit(void) {
-    furi_hal_gpio_write(NRF_CE, false);
+bool nrf24_is_connected(void) {
+    // After nrf24_scanner_init() writes 0x03 to CONFIG register,
+    // read it back. If chip is present we get 0x03.
+    // If MISO is floating (board not connected / switch wrong position) we get 0xFF.
+    uint8_t config = nrf24_read_reg(NRF_REG_CONFIG);
+    return (config == 0x03);
+}
+
+void nrf24_scanner_deinit(void) {    furi_hal_gpio_write(NRF_CE, false);
     nrf24_write_reg(NRF_REG_CONFIG, 0x00); // power down
 
     // Release pins back to floating analog — don't drive bus
