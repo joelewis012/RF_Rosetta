@@ -213,7 +213,9 @@ static void scan_timer_cb(void* ctx) {
     static uint8_t sweep_ticks = 0;
     if(!app->signal_detected) {
         sweep_ticks++;
-        if(sweep_ticks >= 3) {
+        uint8_t ticks_needed = (uint8_t)(signal_capture_get_dwell(app->capture_ctx) / 100);
+        if(ticks_needed < 1) ticks_needed = 1;
+        if(sweep_ticks >= ticks_needed) {
             sweep_ticks = 0;
             signal_capture_next_freq(app->capture_ctx);
         }
@@ -281,45 +283,11 @@ static void scan_timer_cb(void* ctx) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// External board mode reminder
-// Shown via the Widget view (already registered) when External antenna is
-// selected, reminding the user to set their 3-in-1 board to CC1101 mode.
-// ─────────────────────────────────────────────────────────────────────────────
-
-static void ext_reminder_ok_cb(GuiButtonType result, InputType type, void* context) {
-    if(type != InputTypeShort) return;
-    RFRosettaApp* app = context;
-    if(result == GuiButtonTypeRight) {
-        // User acknowledged — proceed to scanning view
-        view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewScanning);
-    } else {
-        // Back — return to main menu
-        scene_manager_previous_scene(app->scene_manager);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Scene lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
 void rf_rosetta_scene_scanning_on_enter(void* ctx) {
     RFRosettaApp* app = (RFRosettaApp*)ctx;
-
-    // ── External board reminder ───────────────────────────────────────────────
-    // If External antenna is selected, show a Widget popup reminding the user
-    // to set their 3-in-1 dev board to CC1101 mode before scanning.
-    // The user presses OK to continue or Back to cancel.
-    if(app->antenna == AntennaExternal) {
-        widget_reset(app->widget);
-        widget_add_string_element(app->widget, 64, 4,  AlignCenter, AlignTop, FontSecondary, "External CC1101");
-        widget_add_string_element(app->widget, 64, 16, AlignCenter, AlignTop, FontSecondary, "Using board CC1101.");
-        widget_add_string_element(app->widget, 64, 27, AlignCenter, AlignTop, FontSecondary, "NRF24 + ESP32 modes");
-        widget_add_string_element(app->widget, 64, 38, AlignCenter, AlignTop, FontSecondary, "coming soon.");
-        widget_add_button_element(app->widget, GuiButtonTypeLeft,  "Back", ext_reminder_ok_cb, app);
-        widget_add_button_element(app->widget, GuiButtonTypeRight, "Scan", ext_reminder_ok_cb, app);
-        view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
-        return;
-    }
 
     app->signal_detected = false;
     app->analyzing       = false;

@@ -122,6 +122,13 @@ static void nrf24_timer_cb(void* ctx) {
     view_commit_model(app->nrf24_view, true);
 }
 
+static void nrf24_not_found_cb(GuiButtonType result, InputType type, void* context) {
+    UNUSED(result);
+    if(type != InputTypeShort) return;
+    RFRosettaApp* app = context;
+    scene_manager_previous_scene(app->scene_manager);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,11 +136,26 @@ static void nrf24_timer_cb(void* ctx) {
 void rf_rosetta_scene_nrf24_on_enter(void* ctx) {
     RFRosettaApp* app = ctx;
 
-    // Reset scan result
-    nrf24_scanner_reset(&app->nrf24_result);
-
-    // Initialise NRF24 hardware
+    // ── Hardware detection ────────────────────────────────────────────────────
+    // Init GPIO and power up NRF24, then read back CONFIG register to verify
+    // the chip is actually present and the board switch is in NRF24 position.
     nrf24_scanner_init();
+
+    if(!nrf24_is_connected()) {
+        // Chip not responding — board not connected or switch in wrong position
+        nrf24_scanner_deinit();
+        widget_reset(app->widget);
+        widget_add_string_element(app->widget, 64, 6,  AlignCenter, AlignTop, FontSecondary, "NRF24 Not Detected");
+        widget_add_string_element(app->widget, 64, 18, AlignCenter, AlignTop, FontSecondary, "Connect your 3-in-1");
+        widget_add_string_element(app->widget, 64, 29, AlignCenter, AlignTop, FontSecondary, "board and flip the");
+        widget_add_string_element(app->widget, 64, 40, AlignCenter, AlignTop, FontSecondary, "switch to NRF24.");
+        widget_add_button_element(app->widget, GuiButtonTypeCenter, "OK", nrf24_not_found_cb, app);
+        view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
+        return;
+    }
+
+    // ── Chip confirmed — start scanning ──────────────────────────────────────
+    nrf24_scanner_reset(&app->nrf24_result);
 
     // Reset view model
     NRF24ViewModel* vm = (NRF24ViewModel*)view_get_model(app->nrf24_view);
@@ -181,6 +203,7 @@ void rf_rosetta_scene_nrf24_on_exit(void* ctx) {
         furi_timer_stop(app->nrf24_timer);
         furi_timer_free(app->nrf24_timer);
         app->nrf24_timer = NULL;
+        nrf24_scanner_deinit();  // only deinit if we actually started
     }
-    nrf24_scanner_deinit();
+    widget_reset(app->widget);
 }

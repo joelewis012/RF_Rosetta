@@ -37,6 +37,11 @@ typedef struct {
 // Call once before sweeping. Do NOT call while CC1101 scanning is active.
 void nrf24_scanner_init(void);
 
+// Returns true if chip is present and responding after init.
+// Read-back check: we write 0x03 to CONFIG in init, then verify it reads back.
+// If MISO is floating (no chip) we get 0xFF back.
+bool nrf24_is_connected(void);
+
 // Power down NRF24 and release GPIO pins back to floating/analog
 void nrf24_scanner_deinit(void);
 
