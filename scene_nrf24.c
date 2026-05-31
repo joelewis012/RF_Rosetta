@@ -25,62 +25,61 @@ static void nrf24_draw_cb(Canvas* canvas, void* model_ptr) {
     canvas_clear(canvas);
     canvas_set_color(canvas, ColorBlack);
 
-    // ── Header ────────────────────────────────────────────────────────────────
+    // Header
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 1, 8, "NRF24  2.4 GHz");
-
-    char sw_str[16];
+    canvas_draw_str(canvas, 1, 8, "NRF24  2.4GHz");
+    char sw_str[12];
     snprintf(sw_str, sizeof(sw_str), "#%lu", (unsigned long)m->sweep_count);
     canvas_draw_str(canvas, 100, 8, sw_str);
     canvas_draw_line(canvas, 0, 10, 128, 10);
 
-    // ── Channel bars ─────────────────────────────────────────────────────────
-    uint8_t scale = m->max_hits > 0 ? m->max_hits : 1;
-    for(uint8_t ch = 0; ch < NRF24_CHANNELS; ch++) {
-        if(m->hits[ch] > 0) {
-            uint8_t h = (uint8_t)((uint16_t)m->hits[ch] * NRF_GRAPH_H / scale);
-            if(h < 2) h = 2; // minimum visible bar
-            uint8_t x = 2 + ch;
-            canvas_draw_line(canvas, x, NRF_GRAPH_BASE - h, x, NRF_GRAPH_BASE);
-        }
-    }
-
-    // Baseline
-    canvas_draw_line(canvas, 2, NRF_GRAPH_BASE, 127, NRF_GRAPH_BASE);
-
-    // ── WiFi & BLE channel markers (tick marks below baseline) ───────────────
-    // WiFi ch1  = 2.412 GHz = NRF24 ch 11  → x=13
-    // WiFi ch6  = 2.437 GHz = NRF24 ch 36  → x=38
-    // WiFi ch11 = 2.462 GHz = NRF24 ch 61  → x=63
-    // WiFi ch13 = 2.472 GHz = NRF24 ch 71  → x=73
-    // BLE adv   = 2.402 GHz = NRF24 ch 1   → x=3  (ch37)
-    // BLE adv   = 2.426 GHz = NRF24 ch 25  → x=27 (ch38)
-    // BLE adv   = 2.480 GHz = NRF24 ch 79  → x=81 (ch39)
-
-    // WiFi markers — 3px tick
-    uint8_t wifi_chs[] = {13, 38, 63};
-    for(uint8_t i = 0; i < 3; i++) {
-        uint8_t x = 2 + wifi_chs[i];
-        canvas_draw_line(canvas, x, NRF_GRAPH_BASE + 1, x, NRF_GRAPH_BASE + 3);
-    }
-
-    // BLE advertising markers — 2px tick
-    uint8_t ble_chs[] = {3, 27, 81};
-    for(uint8_t i = 0; i < 3; i++) {
-        uint8_t x = 2 + ble_chs[i];
-        canvas_draw_line(canvas, x, NRF_GRAPH_BASE + 1, x, NRF_GRAPH_BASE + 2);
-    }
-
-    // ── Frequency labels ─────────────────────────────────────────────────────
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 2,   63, "2.4");
-    canvas_draw_str(canvas, 50,  63, "2.45");
-    canvas_draw_str(canvas, 100, 63, "2.5G");
-
-    // ── Status / instruction ─────────────────────────────────────────────────
-    if(m->sweep_count == 0) {
+    if(m->pkt_valid) {
+        // ── Packet capture display ────────────────────────────────────────────
+        char freq_str[24];
+        uint32_t mhz = m->pkt_freq_khz / 1000;
+        uint32_t rem = m->pkt_freq_khz % 1000;
+        snprintf(freq_str, sizeof(freq_str), "Ch%d  %lu.%03luGHz",
+                 m->pkt_channel, (unsigned long)mhz, (unsigned long)rem);
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 2, 35, "Scanning...");
+        canvas_draw_str(canvas, 1, 22, freq_str);
+        canvas_draw_str(canvas, 1, 33, "Bytes:");
+        canvas_draw_str(canvas, 1, 44, m->pkt_str);
+        canvas_draw_str(canvas, 1, 55, "OK=clear  Back=menu");
+    } else {
+        // ── Channel graph ─────────────────────────────────────────────────────
+        uint8_t graph_base = 50;
+        uint8_t graph_h    = 36;
+        uint8_t scale = m->max_hits > 0 ? m->max_hits : 1;
+
+        for(uint8_t ch = 0; ch < NRF24_CHANNELS; ch++) {
+            if(m->hits[ch] > 0) {
+                uint8_t h = (uint8_t)((uint16_t)m->hits[ch] * graph_h / scale);
+                if(h < 2) h = 2;
+                canvas_draw_line(canvas, 2 + ch, graph_base - h, 2 + ch, graph_base);
+            }
+        }
+        canvas_draw_line(canvas, 2, graph_base, 127, graph_base);
+
+        // WiFi ch markers (3px tick below baseline)
+        uint8_t wifi_chs[] = {13, 38, 63};
+        for(uint8_t i = 0; i < 3; i++) {
+            canvas_draw_line(canvas, 2+wifi_chs[i], graph_base+1, 2+wifi_chs[i], graph_base+3);
+        }
+        // BLE advertising ch markers (2px tick)
+        uint8_t ble_chs[] = {1, 25, 79};
+        for(uint8_t i = 0; i < 3; i++) {
+            canvas_draw_line(canvas, 2+ble_chs[i], graph_base+1, 2+ble_chs[i], graph_base+2);
+        }
+
+        canvas_draw_str(canvas, 2,   63, "2.4");
+        canvas_draw_str(canvas, 50,  63, "2.45");
+        canvas_draw_str(canvas, 100, 63, "2.5G");
+
+        if(m->sweep_count == 0) {
+            canvas_draw_str(canvas, 2, 35, "Scanning...");
+        } else {
+            canvas_draw_str(canvas, 1, 59, "OK=capture pkt");
+        }
     }
 }
 
@@ -108,16 +107,35 @@ static bool nrf24_input_cb(InputEvent* event, void* ctx) {
 
 static void nrf24_timer_cb(void* ctx) {
     RFRosettaApp* app = ctx;
-
-    // Run a sweep (blocking ~25ms — acceptable in timer context)
     nrf24_scanner_sweep(&app->nrf24_result);
 
-    // Copy into view model
     NRF24ViewModel* vm = (NRF24ViewModel*)view_get_model(app->nrf24_view);
     if(vm) {
         memcpy(vm->hits, app->nrf24_result.hits, NRF24_CHANNELS);
         vm->max_hits    = app->nrf24_result.max_hits;
         vm->sweep_count = app->nrf24_result.sweep_count;
+
+        // Copy latest packet if valid
+        if(app->nrf24_last_pkt.valid) {
+            vm->pkt_valid    = true;
+            vm->pkt_channel  = app->nrf24_last_pkt.channel;
+            vm->pkt_freq_khz = app->nrf24_last_pkt.freq_khz;
+            vm->pkt_len      = app->nrf24_last_pkt.length > 8 ? 8 : app->nrf24_last_pkt.length;
+            memcpy(vm->pkt_data, app->nrf24_last_pkt.payload, vm->pkt_len);
+
+            // Build hex string: "A1 B2 C3 D4 E5 F6 07 08"
+            char* p = vm->pkt_str;
+            for(uint8_t i = 0; i < vm->pkt_len; i++) {
+                uint8_t b = vm->pkt_data[i];
+                *p++ = "0123456789ABCDEF"[b >> 4];
+                *p++ = "0123456789ABCDEF"[b & 0xF];
+                *p++ = ' ';
+            }
+            if(p > vm->pkt_str) *(p-1) = '\0';
+            else *p = '\0';
+        } else {
+            vm->pkt_valid = false;
+        }
     }
     view_commit_model(app->nrf24_view, true);
 }
@@ -183,10 +201,31 @@ bool rf_rosetta_scene_nrf24_on_event(void* ctx, SceneManagerEvent ev) {
             return true;
         }
         if(ev.event == RFRosettaEventNRF24Reset) {
-            nrf24_scanner_reset(&app->nrf24_result);
-            NRF24ViewModel* vm = (NRF24ViewModel*)view_get_model(app->nrf24_view);
-            if(vm) memset(vm, 0, sizeof(NRF24ViewModel));
-            view_commit_model(app->nrf24_view, true);
+            // If packet showing → clear it; otherwise reset scan counts
+            if(app->nrf24_last_pkt.valid) {
+                app->nrf24_last_pkt.valid = false;
+                NRF24ViewModel* vm = (NRF24ViewModel*)view_get_model(app->nrf24_view);
+                if(vm) vm->pkt_valid = false;
+                view_commit_model(app->nrf24_view, true);
+            } else {
+                // OK pressed on scan graph — attempt packet capture on busiest channel
+                if(app->nrf24_timer) {
+                    furi_timer_stop(app->nrf24_timer);
+                }
+                // Find most active channel
+                uint8_t best_ch = 0;
+                for(uint8_t ch = 1; ch < NRF24_CHANNELS; ch++) {
+                    if(app->nrf24_result.hits[ch] > app->nrf24_result.hits[best_ch]) {
+                        best_ch = ch;
+                    }
+                }
+                // Try to capture (300ms window)
+                nrf24_capture_packet(best_ch, 300, &app->nrf24_last_pkt);
+
+                if(app->nrf24_timer) {
+                    furi_timer_start(app->nrf24_timer, 50);
+                }
+            }
             return true;
         }
     }

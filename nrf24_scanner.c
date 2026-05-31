@@ -141,6 +141,81 @@ void nrf24_scanner_sweep(NRF24ScanResult* result) {
 
 void nrf24_scanner_reset(NRF24ScanResult* result) {
     memset(result->hits, 0, sizeof(result->hits));
-    result->max_hits   = 0;
+    result->max_hits    = 0;
     result->sweep_count = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Packet capture — promiscuous mode trick
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Multi-byte SPI burst read (for RX FIFO)
+static void nrf24_read_rx_payload(uint8_t* buf, uint8_t len) {
+    furi_hal_gpio_write(NRF_CSN, false);
+    nrf24_spi_xfer(0x61); // R_RX_PAYLOAD command
+    for(uint8_t i = 0; i < len; i++) {
+        buf[i] = nrf24_spi_xfer(0xFF);
+    }
+    furi_hal_gpio_write(NRF_CSN, true);
+}
+
+// Flush RX FIFO
+static void nrf24_flush_rx(void) {
+    furi_hal_gpio_write(NRF_CSN, false);
+    nrf24_spi_xfer(0xE2); // FLUSH_RX
+    furi_hal_gpio_write(NRF_CSN, true);
+}
+
+bool nrf24_capture_packet(uint8_t channel, uint16_t timeout_ms, NRF24Packet* out) {
+    out->valid = false;
+    out->channel = channel;
+    out->freq_khz = 2401000 + (uint32_t)channel * 1000;
+
+    // Reconfigure for promiscuous receive:
+    // 2-byte address width, address 0xAA 0xAA, CRC disabled, 32-byte payload
+    nrf24_write_reg(NRF_REG_CONFIG,    0x03); // PWR_UP, PRIM_RX, no CRC
+    nrf24_write_reg(NRF_REG_EN_AA,     0x00); // disable auto-ACK
+    nrf24_write_reg(NRF_REG_EN_RXADDR, 0x01); // enable pipe 0
+    nrf24_write_reg(NRF_REG_SETUP_AW,  0x00); // 2-byte address (illegal but works)
+    nrf24_write_reg(NRF_REG_RF_CH,     channel);
+    nrf24_write_reg(0x0A, 0xAA);  // RX_ADDR_P0 byte 0
+    nrf24_write_reg(0x11, 0x20);  // RX_PW_P0 = 32 bytes
+
+    nrf24_flush_rx();
+
+    // Clear status flags
+    nrf24_write_reg(0x07, 0x70); // clear RX_DR, TX_DS, MAX_RT in STATUS
+
+    // Enable RX
+    furi_hal_gpio_write(NRF_CE, true);
+
+    bool got_packet = false;
+    uint32_t deadline = timeout_ms * 10; // rough tick count
+
+    for(uint32_t t = 0; t < deadline; t++) {
+        furi_delay_us(100);
+        uint8_t status = nrf24_read_reg(0x07); // STATUS
+        if(status & 0x40) { // RX_DR bit set = data ready
+            out->length = NRF24_PKT_MAX;
+            nrf24_read_rx_payload(out->payload, out->length);
+            out->valid = true;
+            got_packet = true;
+
+            // Clear RX_DR
+            nrf24_write_reg(0x07, 0x40);
+            break;
+        }
+    }
+
+    furi_hal_gpio_write(NRF_CE, false);
+    nrf24_flush_rx();
+
+    // Restore scanner configuration
+    nrf24_write_reg(NRF_REG_CONFIG,    0x03);
+    nrf24_write_reg(NRF_REG_EN_AA,     0x00);
+    nrf24_write_reg(NRF_REG_EN_RXADDR, 0x00);
+    nrf24_write_reg(NRF_REG_SETUP_AW,  0x03);
+    nrf24_write_reg(NRF_REG_RF_SETUP,  0x06);
+
+    return got_packet;
 }

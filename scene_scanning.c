@@ -210,13 +210,12 @@ static void scan_timer_cb(void* ctx) {
     rssi_history_push(&app->rssi_history, rssi);
     app->current_rssi = rssi;
 
-    static uint8_t sweep_ticks = 0;
     if(!app->signal_detected) {
-        sweep_ticks++;
+        app->dwell_ticks++;
         uint8_t ticks_needed = (uint8_t)(signal_capture_get_dwell(app->capture_ctx) / 100);
         if(ticks_needed < 1) ticks_needed = 1;
-        if(sweep_ticks >= ticks_needed) {
-            sweep_ticks = 0;
+        if(app->dwell_ticks >= ticks_needed) {
+            app->dwell_ticks = 0;
             signal_capture_next_freq(app->capture_ctx);
         }
     }
@@ -291,6 +290,7 @@ void rf_rosetta_scene_scanning_on_enter(void* ctx) {
 
     app->signal_detected = false;
     app->analyzing       = false;
+    app->dwell_ticks     = 3; // reset sweep tick counter each entry
     memset(&app->capture, 0, sizeof(app->capture));
     memset(&app->match,   0, sizeof(app->match));
 

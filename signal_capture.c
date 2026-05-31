@@ -1,4 +1,5 @@
 #include "signal_capture.h"
+#include "cc1101_ext.h"
 #include <furi.h>
 #include <furi_hal.h>
 #include <furi_hal_subghz.h>
@@ -70,12 +71,13 @@ struct SignalCaptureCtx {
     ScanMode    mode;
     AntennaMode antenna;
     bool        antenna_ok;
+    bool        use_ext_cc1101;  // true = external CC1101 via bit-bang SPI
     uint32_t    frequency;
     float       threshold;
     uint16_t    sweep_index;
     bool        running;
-    uint16_t    dwell_ms;       // ms per frequency (default 300)
-    uint8_t     preset_idx;     // for ScanModeAll: 0=OOK 1=FSK-N 2=FSK-W
+    uint16_t    dwell_ms;
+    uint8_t     preset_idx;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ float rssi_history_get(const RSSIHistory* h, uint8_t index) {
     return h->values[pos];
 }
 
-// (Antenna selection is now handled via subghz_devices — see signal_capture_start)
+// (Antenna selection: internal uses furi_hal_subghz, external uses cc1101_ext bit-bang)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context lifecycle
@@ -103,10 +105,11 @@ float rssi_history_get(const RSSIHistory* h, uint8_t index) {
 SignalCaptureCtx* signal_capture_alloc(void) {
     SignalCaptureCtx* ctx = malloc(sizeof(SignalCaptureCtx));
     furi_assert(ctx);
-    ctx->mode         = ScanModeAll;
-    ctx->antenna      = AntennaInternal;
-    ctx->antenna_ok   = true;
-    ctx->frequency    = 0;
+    ctx->mode             = ScanModeAll;
+    ctx->antenna          = AntennaInternal;
+    ctx->antenna_ok       = true;
+    ctx->use_ext_cc1101   = false;
+    ctx->frequency        = 0;
     ctx->threshold    = SIGNAL_THRESHOLD_DBM;
     ctx->sweep_index  = 0;
     ctx->running      = false;
@@ -147,11 +150,6 @@ void signal_capture_set_threshold(SignalCaptureCtx* ctx, float threshold_dbm) {
 bool signal_capture_start(SignalCaptureCtx* ctx) {
     if(ctx->running) return true;
 
-    furi_hal_subghz_reset();
-    furi_hal_subghz_idle();
-
-    // Preset arrays (addr,val pairs terminated by 0x00,0x00)
-    // Stored static so they're accessible from poll_rssi too
     static const uint8_t preset_ook650[] = {
         0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
         0x14,0x00, 0x13,0x00, 0x12,0x30, 0x11,0x32,
@@ -171,44 +169,74 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
         0x1C,0x00, 0x1B,0x07, 0x00,0x00,
     };
 
-    ctx->preset_idx = 0;
+    ctx->preset_idx      = 0;
+    ctx->use_ext_cc1101  = false;
+    ctx->antenna_ok      = true;
 
-    // Load initial preset
+    uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
+
+    if(ctx->antenna == AntennaExternal) {
+        // ── Try external CC1101 via bit-bang SPI ─────────────────────────────
+        if(cc1101_ext_init()) {
+            // External chip confirmed — use bit-bang driver
+            ctx->use_ext_cc1101 = true;
+            const uint8_t* preset = preset_ook650;
+            if(ctx->mode == ScanModeRFNarrow) preset = preset_fsk238;
+            if(ctx->mode == ScanModeRFWide)   preset = preset_fsk476;
+            cc1101_ext_load_preset(preset);
+            cc1101_ext_set_frequency(freq);
+            cc1101_ext_rx();
+            ctx->running = true;
+            return true;
+        } else {
+            // External not found — fall back to internal, flag it
+            cc1101_ext_deinit();
+            ctx->antenna_ok = false;
+        }
+    }
+
+    // ── Internal CC1101 via furi_hal_subghz ──────────────────────────────────
+    furi_hal_subghz_reset();
+    furi_hal_subghz_idle();
+
     switch(ctx->mode) {
-        case ScanModeAll:      // starts with OOK, cycles in poll_rssi
+        case ScanModeAll:
         case ScanModeSubGHz:   furi_hal_subghz_load_custom_preset(preset_ook650); break;
         case ScanModeRFNarrow: furi_hal_subghz_load_custom_preset(preset_fsk238); break;
         case ScanModeRFWide:   furi_hal_subghz_load_custom_preset(preset_fsk476); break;
     }
 
-    uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[0];
     furi_hal_subghz_set_frequency_and_path(freq);
     furi_hal_subghz_rx();
-
-    // External antenna note: subghz_devices API for cc1101_ext is not exported
-    // in the FAP SDK link stage. External CC1101 dev board support requires
-    // firmware-level integration. For now antenna setting affects display only.
-    ctx->antenna_ok = true;
-    ctx->running    = true;
+    ctx->running = true;
     return true;
 }
 
 void signal_capture_stop(SignalCaptureCtx* ctx) {
     if(!ctx->running) return;
-    if(s_raw.capturing) {
-        furi_hal_subghz_stop_async_rx();
-        s_raw.capturing = false;
+    if(ctx->use_ext_cc1101) {
+        cc1101_ext_idle();
+        cc1101_ext_deinit();
+    } else {
+        if(s_raw.capturing) {
+            furi_hal_subghz_stop_async_rx();
+            s_raw.capturing = false;
+        }
+        furi_hal_subghz_idle();
+        furi_hal_subghz_sleep();
     }
-    furi_hal_subghz_idle();
-    furi_hal_subghz_sleep();
+    ctx->use_ext_cc1101 = false;
     ctx->running = false;
 }
 
 float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
     if(!ctx->running) return -120.0f;
 
+    if(ctx->use_ext_cc1101) {
+        return cc1101_ext_get_rssi();
+    }
+
     if(ctx->mode == ScanModeAll) {
-        // Cycle through OOK → FSK-N → FSK-W on each poll call
         static const uint8_t preset_ook650[] = {
             0x02,0x0D, 0x03,0x07, 0x08,0x32, 0x0B,0x06,
             0x14,0x00, 0x13,0x00, 0x12,0x30, 0x11,0x32,
@@ -228,20 +256,22 @@ float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
             0x1C,0x00, 0x1B,0x07, 0x00,0x00,
         };
         static const uint8_t* presets[3] = { preset_ook650, preset_fsk238, preset_fsk476 };
-
         ctx->preset_idx = (ctx->preset_idx + 1) % 3;
         uint32_t freq = ctx->frequency > 0 ? ctx->frequency : SWEEP_FREQUENCIES[ctx->sweep_index];
         furi_hal_subghz_idle();
         furi_hal_subghz_load_custom_preset(presets[ctx->preset_idx]);
         furi_hal_subghz_set_frequency_and_path(freq);
         furi_hal_subghz_rx();
-        furi_delay_ms(8); // settle time after preset switch
+        furi_delay_ms(8);
     }
 
     return furi_hal_subghz_get_rssi();
 }
 
 float signal_capture_noise_floor(SignalCaptureCtx* ctx) {
+    // External CC1101: can't sweep internal HAL, return fixed estimate
+    if(ctx->use_ext_cc1101) return -90.0f;
+
     float    total   = 0.0f;
     uint16_t samples = 0;
     uint8_t  limit   = 8;
@@ -316,6 +346,8 @@ static bool is_fixed_code_heuristic(const uint32_t* pulses, uint16_t count) {
 
 bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     if(!ctx->running) return false;
+    // External CC1101: no async RX interrupt via bit-bang — internal only for now
+    if(ctx->use_ext_cc1101) return false;
     memset(out, 0, sizeof(SignalCapture));
 
     out->frequency   = ctx->frequency > 0 ? ctx->frequency : signal_capture_current_freq(ctx);
@@ -366,9 +398,15 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
 uint32_t signal_capture_next_freq(SignalCaptureCtx* ctx) {
     ctx->sweep_index = (ctx->sweep_index + 1) % SWEEP_FREQ_COUNT;
     uint32_t freq    = SWEEP_FREQUENCIES[ctx->sweep_index];
-    furi_hal_subghz_idle();
-    furi_hal_subghz_set_frequency_and_path(freq);
-    furi_hal_subghz_rx();
+    if(ctx->use_ext_cc1101) {
+        cc1101_ext_idle();
+        cc1101_ext_set_frequency(freq);
+        cc1101_ext_rx();
+    } else {
+        furi_hal_subghz_idle();
+        furi_hal_subghz_set_frequency_and_path(freq);
+        furi_hal_subghz_rx();
+    }
     return freq;
 }
 

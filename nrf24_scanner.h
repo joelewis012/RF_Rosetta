@@ -52,3 +52,22 @@ void nrf24_scanner_sweep(NRF24ScanResult* result);
 
 // Reset hit counts (call when user wants a fresh scan)
 void nrf24_scanner_reset(NRF24ScanResult* result);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Packet capture (promiscuous mode trick)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#define NRF24_PKT_MAX 32
+
+typedef struct {
+    uint8_t  channel;          // NRF24 channel (0-124)
+    uint8_t  payload[NRF24_PKT_MAX];
+    uint8_t  length;           // bytes captured
+    bool     valid;            // false = no packet captured
+    uint32_t freq_khz;         // approx frequency in kHz
+} NRF24Packet;
+
+// Attempt to capture a packet on the given channel.
+// Uses 2-byte address 0xAA/0xAA and CRC disabled (promiscuous trick).
+// Blocks for up to timeout_ms.  Returns true if a packet was received.
+bool nrf24_capture_packet(uint8_t channel, uint16_t timeout_ms, NRF24Packet* out);

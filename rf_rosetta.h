@@ -14,6 +14,7 @@
 #include "protocol_db.h"
 #include "signal_capture.h"
 #include "nrf24_scanner.h"
+#include "cc1101_ext.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CC1101 Scanning view model
@@ -46,6 +47,13 @@ typedef struct {
     uint8_t  hits[NRF24_CHANNELS];
     uint8_t  max_hits;
     uint32_t sweep_count;
+    // Last captured packet
+    bool     pkt_valid;
+    uint8_t  pkt_channel;
+    uint8_t  pkt_data[8];   // first 8 bytes for display
+    uint8_t  pkt_len;
+    uint32_t pkt_freq_khz;
+    char     pkt_str[48];   // formatted hex string for display
 } NRF24ViewModel;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +160,7 @@ typedef struct {
 
     // NRF24 scan state
     NRF24ScanResult     nrf24_result;
+    NRF24Packet         nrf24_last_pkt;  // most recently captured packet
 
     // Settings
     ScanMode            scan_mode;
