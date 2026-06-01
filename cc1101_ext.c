@@ -129,8 +129,10 @@ bool cc1101_ext_is_connected(void) {
 }
 
 void cc1101_ext_set_frequency(uint32_t freq_hz) {
-    // freq_reg = freq_hz / (26MHz / 2^16)
-    uint32_t freq_reg = (uint32_t)((double)freq_hz / (26000000.0 / 65536.0));
+    // freq_reg = freq_hz * 2^16 / 26MHz
+    // Use uint64_t to avoid overflow (433e6 * 65536 = ~28e12, fits in uint64)
+    uint64_t tmp      = (uint64_t)freq_hz * 65536ULL;
+    uint32_t freq_reg = (uint32_t)(tmp / 26000000ULL);
     cc1101_strobe(CC_SIDLE);
     cc1101_write_reg(CC_REG_FREQ2, (freq_reg >> 16) & 0xFF);
     cc1101_write_reg(CC_REG_FREQ1, (freq_reg >> 8)  & 0xFF);
