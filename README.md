@@ -17,7 +17,7 @@
 
 Point your Flipper at any unknown wireless signal and find out exactly what it is —
 car key, tyre sensor, alarm, smart meter, medical device, weather station, or one of
-50+ other identified protocols. In seconds.
+120+ other identified protocols. In seconds.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Flipper Zero](https://img.shields.io/badge/Flipper%20Zero-FAP-orange)](https://flipperzero.one)
@@ -136,41 +136,67 @@ from **NRF24 2.4GHz Scan** on the main menu.
 - Sweeps all 125 channels (2.401–2.525 GHz)
 - Live bar graph with WiFi (ch1/6/11) and BLE advertising channel markers
 - Press **OK** to attempt packet capture on the busiest channel
-- Captured packet shown as hex bytes with frequency
+- Captures are automatically decoded and identified as:
+  - **BLE Advertising** — PDU type and advertiser MAC address
+  - **Logitech Unifying** — device ID, flagged for MouseJack risk
+  - **MouseJack** — unencrypted HID packets, flagged as a security risk
+  - **Nordic ShockBurst** — generic packet with hex dump if no known pattern matches
 
-> Requires your 3-in-1 dev board with the physical switch in NRF24 position.
-> The app detects whether the chip is connected — if not, it shows a "Not Detected" screen.
+> Requires a dev board with NRF24 hardware, with the board's switch (if present) in
+> NRF24 position. RF Rosetta detects whether the chip is connected — if not, it
+> shows a "Not Detected" screen instead of guessing.
 
 ---
 
-## Dev Board Support (3-in-1)
+## Dev Board Support
 
-RF Rosetta is designed for the **3-in-1 Flipper Zero expansion board** (CC1101 + NRF24 + ESP32).
+RF Rosetta works with the **CC1101 and NRF24 modules on external Flipper dev boards**,
+using a proper GPIO preset system so you're not locked to one specific board.
 
 | Module | What it does in RF Rosetta |
 |---|---|
-| **CC1101 (high gain)** | Sub-GHz scanning — better range than internal antenna |
-| **NRF24L01** | 2.4 GHz channel scanner and packet capture |
+| **External CC1101** | Full sub-GHz scanning + signal capture, same as internal — plus better range on high-gain boards |
+| **NRF24L01** | 2.4 GHz channel scanner, packet capture, and decode (BLE adv, ShockBurst, MouseJack detection) |
 | **ESP32 (Marauder)** | Coming soon — WiFi network scanner |
 
-### GPIO Pinout
+### Board Presets
 
-All three chips share the same SPI bus. The physical switch on the board selects
-which chip is active. ESP32 is always available via UART.
+Settings → **Dev Board** lets you pick your hardware. RF Rosetta ships with known-good
+pinouts for:
 
-| Flipper GPIO | Signal | CC1101 / NRF24 |
+| Preset | Boards it covers |
+|---|---|
+| **3-in-1 Board** (default) | Generic CC1101+NRF24+ESP32 combo boards (most common on AliExpress) |
+| **Flipper Dev Board** | Official Flipper dev board CC1101 module |
+| **WiFi Dev Board** | Flipper WiFi dev board v1/v2 |
+| **CC1101 Breadboard** | Bare CC1101 module, common breadboard wiring |
+| **NRF24 Standalone** | Bare NRF24L01+ module |
+| **Missile RF** | Rabbit-Labs Missile RF board |
+| **Custom** | Set your own pin mapping if your board isn't listed |
+
+If your board isn't in the list and the presets don't work, select **Custom** — RF
+Rosetta will use the 3-in-1 default pinout as a starting point which you can verify
+against your board's actual wiring.
+
+### GPIO Pinout (3-in-1 default)
+
+All radio modules share the same SPI bus; a physical switch on most boards selects
+which chip is active. ESP32 is always available via UART regardless of switch position.
+
+| Flipper GPIO | Signal | Used by |
 |---|---|---|
-| Pin 2 (PA7) | MOSI | Both |
-| Pin 3 (PA6) | MISO | Both |
-| Pin 4 (PA4) | CSN | Both |
-| Pin 5 (PB3) | SCK | Both |
-| Pin 6 (PB2) | CE | NRF24 only |
+| Pin 2 (PA7) | MOSI | CC1101 + NRF24 |
+| Pin 3 (PA6) | MISO | CC1101 + NRF24 |
+| Pin 4 (PA4) | CSN | CC1101 + NRF24 |
+| Pin 5 (PB3) | SCK | CC1101 + NRF24 |
+| Pin 6 (PB2) | GDO0 / CE | CC1101 packet indicator / NRF24 RX enable |
 | Pin 13 | UART TX | ESP32 RX |
 | Pin 14 | UART RX | ESP32 TX |
 
-To use the external CC1101: set **Antenna → External** in Settings.
-RF Rosetta will detect the chip automatically. If it can't find it, it falls back
-to the Flipper's internal antenna and shows a status message.
+To use the external CC1101: set **Antenna → External** in Settings, and pick the
+matching **Dev Board** preset. RF Rosetta detects the chip automatically by reading
+its VERSION register — if it can't find it, it falls back to the Flipper's internal
+antenna and shows a status message.
 
 ---
 
@@ -202,8 +228,10 @@ ufbt
 |---|---|---|
 | Scan Mode | All / OOK / FSK-N / FSK-W | All is the default — covers every signal type |
 | Antenna | Internal / External | External uses the CC1101 on your dev board |
+| Dev Board | See [board presets](#board-presets) | Which GPIO pinout to use for external CC1101/NRF24 |
 | Threshold | -90 to -60 dBm | Lower = more sensitive, more false triggers |
-| SD Logging | On / Off | Saves all captures to `SD:/rf_rosetta/log.txt` |
+| Dwell Speed | 100ms – 2s | Time spent per frequency during sweep |
+| SD Logging | On / Off | Saves all captures to configurable log path |
 
 ---
 
@@ -248,8 +276,11 @@ Pull requests for new protocols are very welcome.
 Yes — the Sub-GHz scanner uses the built-in CC1101. NRF24 scanning requires the dev board.
 
 **Does it decode the actual content of signals?**
-RF Rosetta identifies the protocol and tells you what could be decoded. Full live
-decoding (TPMS pressure values, meter readings as numbers) is on the roadmap.
+Yes, for a growing set of protocols. TPMS shows live pressure and temperature,
+weather stations show temperature/humidity/wind, utility meters show manufacturer
+and ID (payload itself stays encrypted where the protocol uses AES). For protocols
+without a live decoder, RF Rosetta still identifies what it is and what data it
+theoretically carries.
 
 **Is this legal to use?**
 RF Rosetta is a passive listener — it does not transmit anything. Passive reception
@@ -263,11 +294,17 @@ Unknown signals help grow the database.
 
 ## Roadmap
 
-- [ ] Live TPMS pressure and temperature decoding
-- [ ] Smart meter consumption number extraction
-- [ ] Weather station temperature/humidity live decode
+- [x] Live TPMS pressure and temperature decoding
+- [x] Smart meter manufacturer/ID extraction
+- [x] Weather station temperature/humidity live decode
+- [x] Signal fingerprinting and RSSI trend arrows
+- [x] External CC1101 full signal capture support
+- [x] NRF24 2.4GHz scanner and packet decode
+- [x] .sub file export (compatible with Flipper's Sub-GHz player)
+- [x] Custom GPIO / multi-board support
+- [x] 120+ protocol database
 - [ ] ESP32/Marauder WiFi network scanner integration
-- [ ] Live TPMS pressure and temperature decoding
+- [ ] NRF24 encrypted payload heuristics (beyond MouseJack/ShockBurst)
 - [ ] Community protocol submission via GitHub Issues template
 
 ---
