@@ -3,60 +3,44 @@
 #include <furi_hal.h>
 #include <string.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GPIO pin references (extern declared in furi_hal_gpio.h)
-// ─────────────────────────────────────────────────────────────────────────────
-
-#define NRF_MOSI (&gpio_ext_pa7)
-#define NRF_MISO (&gpio_ext_pa6)
-#define NRF_CSN  (&gpio_ext_pa4)
-#define NRF_SCK  (&gpio_ext_pb3)
-#define NRF_CE   (&gpio_ext_pb2)
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NRF24 register addresses
-// ─────────────────────────────────────────────────────────────────────────────
-
 #define NRF_REG_CONFIG    0x00
 #define NRF_REG_EN_AA     0x01
 #define NRF_REG_EN_RXADDR 0x02
 #define NRF_REG_SETUP_AW  0x03
 #define NRF_REG_RF_CH     0x05
 #define NRF_REG_RF_SETUP  0x06
-#define NRF_REG_RPD       0x09  // Received Power Detector (bit 0)
-
-#define NRF_CMD_W_REG     0x20
-#define NRF_CMD_R_REG     0x00
+#define NRF_REG_RPD       0x09
+#define NRF_CMD_R_RX_PLD  0x61
+#define NRF_CMD_FLUSH_RX  0xE2
 #define NRF_CMD_NOP       0xFF
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bit-bang SPI
-// CPOL=0, CPHA=0 (SPI mode 0), MSB first
+// Bit-bang SPI (CPOL=0, CPHA=0, MSB first)
 // ─────────────────────────────────────────────────────────────────────────────
 
-static uint8_t nrf24_spi_xfer(uint8_t data) {
+static uint8_t nrf_spi_xfer(const RFGPIOConfig* g, uint8_t data) {
     uint8_t result = 0;
     for(int8_t i = 7; i >= 0; i--) {
-        furi_hal_gpio_write(NRF_MOSI, (data >> i) & 1);
-        furi_hal_gpio_write(NRF_SCK, true);
-        result = (result << 1) | (furi_hal_gpio_read(NRF_MISO) ? 1 : 0);
-        furi_hal_gpio_write(NRF_SCK, false);
+        furi_hal_gpio_write(g->mosi, (data >> i) & 1);
+        furi_hal_gpio_write(g->sck,  true);
+        result = (uint8_t)((result << 1) | (furi_hal_gpio_read(g->miso) ? 1 : 0));
+        furi_hal_gpio_write(g->sck,  false);
     }
     return result;
 }
 
-static void nrf24_write_reg(uint8_t reg, uint8_t val) {
-    furi_hal_gpio_write(NRF_CSN, false);
-    nrf24_spi_xfer(NRF_CMD_W_REG | (reg & 0x1F));
-    nrf24_spi_xfer(val);
-    furi_hal_gpio_write(NRF_CSN, true);
+static void nrf_write_reg(const RFGPIOConfig* g, uint8_t reg, uint8_t val) {
+    furi_hal_gpio_write(g->csn, false);
+    nrf_spi_xfer(g, 0x20 | (reg & 0x1F));
+    nrf_spi_xfer(g, val);
+    furi_hal_gpio_write(g->csn, true);
 }
 
-static uint8_t nrf24_read_reg(uint8_t reg) {
-    furi_hal_gpio_write(NRF_CSN, false);
-    nrf24_spi_xfer(NRF_CMD_R_REG | (reg & 0x1F));
-    uint8_t val = nrf24_spi_xfer(NRF_CMD_NOP);
-    furi_hal_gpio_write(NRF_CSN, true);
+static uint8_t nrf_read_reg(const RFGPIOConfig* g, uint8_t reg) {
+    furi_hal_gpio_write(g->csn, false);
+    nrf_spi_xfer(g, reg & 0x1F);
+    uint8_t val = nrf_spi_xfer(g, NRF_CMD_NOP);
+    furi_hal_gpio_write(g->csn, true);
     return val;
 }
 
@@ -64,77 +48,52 @@ static uint8_t nrf24_read_reg(uint8_t reg) {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-void nrf24_scanner_init(void) {
-    // Configure GPIO
-    furi_hal_gpio_init(NRF_CSN,  GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_MOSI, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_SCK,  GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_CE,   GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_MISO, GpioModeInput,          GpioPullNo, GpioSpeedLow);
+void nrf24_scanner_init(const RFGPIOConfig* gpio) {
+    const RFGPIOConfig* g = gpio;
+    furi_hal_gpio_init(g->csn,  GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(g->mosi, GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(g->sck,  GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(g->aux,  GpioModeOutputPushPull, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(g->miso, GpioModeInput,          GpioPullNo, GpioSpeedLow);
 
-    // Safe initial states
-    furi_hal_gpio_write(NRF_CSN,  true);   // CS deasserted
-    furi_hal_gpio_write(NRF_SCK,  false);  // clock idle low
-    furi_hal_gpio_write(NRF_CE,   false);  // RX disabled
-    furi_hal_gpio_write(NRF_MOSI, false);
+    furi_hal_gpio_write(g->csn,  true);
+    furi_hal_gpio_write(g->sck,  false);
+    furi_hal_gpio_write(g->aux,  false);
+    furi_hal_gpio_write(g->mosi, false);
+    furi_delay_ms(5);
 
-    furi_delay_ms(5); // VCC ramp-up / power-on reset
-
-    // CONFIG: PWR_UP=1, PRIM_RX=1, CRC disabled (0b00000011)
-    nrf24_write_reg(NRF_REG_CONFIG, 0x03);
-    furi_delay_ms(2); // oscillator startup
-
-    // RF_SETUP: 1 Mbps data rate, 0 dBm PA output (0b00000110)
-    nrf24_write_reg(NRF_REG_RF_SETUP, 0x06);
-
-    // Disable auto-ACK and all RX pipes (we just need RPD)
-    nrf24_write_reg(NRF_REG_EN_AA,     0x00);
-    nrf24_write_reg(NRF_REG_EN_RXADDR, 0x00);
+    nrf_write_reg(gpio, NRF_REG_CONFIG,    0x03);
+    furi_delay_ms(2);
+    nrf_write_reg(gpio, NRF_REG_RF_SETUP,  0x06);
+    nrf_write_reg(gpio, NRF_REG_EN_AA,     0x00);
+    nrf_write_reg(gpio, NRF_REG_EN_RXADDR, 0x00);
 }
 
-bool nrf24_is_connected(void) {
-    // After nrf24_scanner_init() writes 0x03 to CONFIG register,
-    // read it back. If chip is present we get 0x03.
-    // If MISO is floating (board not connected / switch wrong position) we get 0xFF.
-    uint8_t config = nrf24_read_reg(NRF_REG_CONFIG);
-    return (config == 0x03);
+bool nrf24_is_connected(const RFGPIOConfig* gpio) {
+    return (nrf_read_reg(gpio, NRF_REG_CONFIG) == 0x03);
 }
 
-void nrf24_scanner_deinit(void) {    furi_hal_gpio_write(NRF_CE, false);
-    nrf24_write_reg(NRF_REG_CONFIG, 0x00); // power down
-
-    // Release pins back to floating analog — don't drive bus
-    furi_hal_gpio_init(NRF_CSN,  GpioModeAnalog, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_MOSI, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_SCK,  GpioModeAnalog, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_CE,   GpioModeAnalog, GpioPullNo, GpioSpeedLow);
-    furi_hal_gpio_init(NRF_MISO, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+void nrf24_scanner_deinit(const RFGPIOConfig* gpio) {
+    furi_hal_gpio_write(gpio->aux, false);
+    nrf_write_reg(gpio, NRF_REG_CONFIG, 0x00);
+    furi_hal_gpio_init(gpio->csn,  GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(gpio->mosi, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(gpio->sck,  GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(gpio->aux,  GpioModeAnalog, GpioPullNo, GpioSpeedLow);
+    furi_hal_gpio_init(gpio->miso, GpioModeAnalog, GpioPullNo, GpioSpeedLow);
 }
 
-void nrf24_scanner_sweep(NRF24ScanResult* result) {
+void nrf24_scanner_sweep(const RFGPIOConfig* gpio, NRF24ScanResult* result) {
     result->max_hits = 0;
-
     for(uint8_t ch = 0; ch < NRF24_CHANNELS; ch++) {
-        // Tune to channel
-        nrf24_write_reg(NRF_REG_RF_CH, ch);
-
-        // Pulse CE high to enable RX — needs 130µs settling
-        furi_hal_gpio_write(NRF_CE, true);
+        nrf_write_reg(gpio, NRF_REG_RF_CH, ch);
+        furi_hal_gpio_write(gpio->aux, true);
         furi_delay_us(170);
-
-        // Read Received Power Detector — bit 0 = signal present
-        uint8_t rpd = nrf24_read_reg(NRF_REG_RPD) & 0x01;
-
-        furi_hal_gpio_write(NRF_CE, false);
-
-        if(rpd) {
-            if(result->hits[ch] < 255) result->hits[ch]++;
-        }
-        if(result->hits[ch] > result->max_hits) {
-            result->max_hits = result->hits[ch];
-        }
+        uint8_t rpd = nrf_read_reg(gpio, NRF_REG_RPD) & 0x01;
+        furi_hal_gpio_write(gpio->aux, false);
+        if(rpd && result->hits[ch] < 255) result->hits[ch]++;
+        if(result->hits[ch] > result->max_hits) result->max_hits = result->hits[ch];
     }
-
     result->sweep_count++;
     result->running = true;
 }
@@ -146,76 +105,120 @@ void nrf24_scanner_reset(NRF24ScanResult* result) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Packet capture — promiscuous mode trick
+// Packet capture (promiscuous mode trick)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Multi-byte SPI burst read (for RX FIFO)
-static void nrf24_read_rx_payload(uint8_t* buf, uint8_t len) {
-    furi_hal_gpio_write(NRF_CSN, false);
-    nrf24_spi_xfer(0x61); // R_RX_PAYLOAD command
-    for(uint8_t i = 0; i < len; i++) {
-        buf[i] = nrf24_spi_xfer(0xFF);
-    }
-    furi_hal_gpio_write(NRF_CSN, true);
-}
-
-// Flush RX FIFO
-static void nrf24_flush_rx(void) {
-    furi_hal_gpio_write(NRF_CSN, false);
-    nrf24_spi_xfer(0xE2); // FLUSH_RX
-    furi_hal_gpio_write(NRF_CSN, true);
-}
-
-bool nrf24_capture_packet(uint8_t channel, uint16_t timeout_ms, NRF24Packet* out) {
-    out->valid = false;
-    out->channel = channel;
+bool nrf24_capture_packet(const RFGPIOConfig* gpio, uint8_t channel,
+                           uint16_t timeout_ms, NRF24Packet* out) {
+    out->valid    = false;
+    out->channel  = channel;
     out->freq_khz = 2401000 + (uint32_t)channel * 1000;
 
-    // Reconfigure for promiscuous receive:
-    // 2-byte address width, address 0xAA 0xAA, CRC disabled, 32-byte payload
-    nrf24_write_reg(NRF_REG_CONFIG,    0x03); // PWR_UP, PRIM_RX, no CRC
-    nrf24_write_reg(NRF_REG_EN_AA,     0x00); // disable auto-ACK
-    nrf24_write_reg(NRF_REG_EN_RXADDR, 0x01); // enable pipe 0
-    nrf24_write_reg(NRF_REG_SETUP_AW,  0x00); // 2-byte address (illegal but works)
-    nrf24_write_reg(NRF_REG_RF_CH,     channel);
-    nrf24_write_reg(0x0A, 0xAA);  // RX_ADDR_P0 byte 0
-    nrf24_write_reg(0x11, 0x20);  // RX_PW_P0 = 32 bytes
+    nrf_write_reg(gpio, NRF_REG_CONFIG,    0x03);
+    nrf_write_reg(gpio, NRF_REG_EN_AA,     0x00);
+    nrf_write_reg(gpio, NRF_REG_EN_RXADDR, 0x01);
+    nrf_write_reg(gpio, NRF_REG_SETUP_AW,  0x00);
+    nrf_write_reg(gpio, NRF_REG_RF_CH,     channel);
+    nrf_write_reg(gpio, 0x0A, 0xAA);
+    nrf_write_reg(gpio, 0x11, 0x20);
 
-    nrf24_flush_rx();
+    furi_hal_gpio_write(gpio->csn, false);
+    nrf_spi_xfer(gpio, NRF_CMD_FLUSH_RX);
+    furi_hal_gpio_write(gpio->csn, true);
+    nrf_write_reg(gpio, 0x07, 0x70);
 
-    // Clear status flags
-    nrf24_write_reg(0x07, 0x70); // clear RX_DR, TX_DS, MAX_RT in STATUS
+    furi_hal_gpio_write(gpio->aux, true);
 
-    // Enable RX
-    furi_hal_gpio_write(NRF_CE, true);
-
-    bool got_packet = false;
-    uint32_t deadline = timeout_ms * 10; // rough tick count
-
-    for(uint32_t t = 0; t < deadline; t++) {
+    bool got = false;
+    uint32_t limit = (uint32_t)timeout_ms * 10;
+    for(uint32_t t = 0; t < limit; t++) {
         furi_delay_us(100);
-        uint8_t status = nrf24_read_reg(0x07); // STATUS
-        if(status & 0x40) { // RX_DR bit set = data ready
-            out->length = NRF24_PKT_MAX;
-            nrf24_read_rx_payload(out->payload, out->length);
+        if(nrf_read_reg(gpio, 0x07) & 0x40) {
+            out->length = 32;
+            furi_hal_gpio_write(gpio->csn, false);
+            nrf_spi_xfer(gpio, NRF_CMD_R_RX_PLD);
+            for(uint8_t i = 0; i < out->length; i++)
+                out->payload[i] = nrf_spi_xfer(gpio, NRF_CMD_NOP);
+            furi_hal_gpio_write(gpio->csn, true);
             out->valid = true;
-            got_packet = true;
-
-            // Clear RX_DR
-            nrf24_write_reg(0x07, 0x40);
+            got = true;
+            nrf_write_reg(gpio, 0x07, 0x40);
             break;
         }
     }
 
-    furi_hal_gpio_write(NRF_CE, false);
-    nrf24_flush_rx();
+    furi_hal_gpio_write(gpio->aux, false);
+    furi_hal_gpio_write(gpio->csn, false);
+    nrf_spi_xfer(gpio, NRF_CMD_FLUSH_RX);
+    furi_hal_gpio_write(gpio->csn, true);
+    nrf_write_reg(gpio, NRF_REG_CONFIG,    0x03);
+    nrf_write_reg(gpio, NRF_REG_EN_AA,     0x00);
+    nrf_write_reg(gpio, NRF_REG_EN_RXADDR, 0x00);
+    nrf_write_reg(gpio, NRF_REG_SETUP_AW,  0x03);
+    nrf_write_reg(gpio, NRF_REG_RF_SETUP,  0x06);
 
-    // Restore scanner configuration
-    nrf24_write_reg(NRF_REG_CONFIG,    0x03);
-    nrf24_write_reg(NRF_REG_EN_AA,     0x00);
-    nrf24_write_reg(NRF_REG_EN_RXADDR, 0x00);
-    nrf24_write_reg(NRF_REG_SETUP_AW,  0x03);
-    nrf24_write_reg(NRF_REG_RF_SETUP,  0x06);
+    return got;
+}
 
-    return got_packet;
+// ─────────────────────────────────────────────────────────────────────────────
+// Packet decode
+// ─────────────────────────────────────────────────────────────────────────────
+
+NRF24PacketType nrf24_decode_packet(const NRF24Packet* pkt, NRF24Decode* out) {
+    out->type          = NRF24TypeUnknown;
+    out->security_flag = false;
+
+    if(!pkt || !pkt->valid || pkt->length < 4) {
+        snprintf(out->summary, sizeof(out->summary), "Too short");
+        snprintf(out->detail,  sizeof(out->detail),  "Need >= 4 bytes");
+        return NRF24TypeUnknown;
+    }
+
+    const uint8_t* d = pkt->payload;
+    uint8_t        n = pkt->length;
+
+    bool ble_ch = (pkt->channel == 2 || pkt->channel == 26 || pkt->channel == 80);
+    if(ble_ch && n >= 8) {
+        uint8_t pdu = d[2] & 0x0F;
+        if(pdu <= 7 && 9 < n) {
+            out->type = NRF24TypeBLEAdv;
+            snprintf(out->summary, sizeof(out->summary), "BLE Adv PDU %d", pdu);
+            snprintf(out->detail, sizeof(out->detail),
+                "BLE Advertising\nPDU: %d\nAddr: %02X:%02X:%02X\n      %02X:%02X:%02X\nch%d",
+                pdu, d[9],d[8],d[7],d[6],d[5],d[4], pkt->channel);
+            return NRF24TypeBLEAdv;
+        }
+    }
+
+    bool logi = (pkt->channel % 3 == 2) && pkt->channel < 50;
+    if(logi && n >= 5 && d[0] != 0x00 && d[4] == 0x00) {
+        out->type = NRF24TypeLogitek;
+        out->security_flag = true;
+        snprintf(out->summary, sizeof(out->summary), "Logitech Unifying 0x%02X", d[0]);
+        snprintf(out->detail, sizeof(out->detail),
+            "Logitech Unifying\nDevice: 0x%02X\nType: 0x%02X\n[!] MouseJack risk", d[0], d[1]);
+        return NRF24TypeLogitek;
+    }
+
+    if(n >= 5 && d[1] == 0x00 && d[0] != 0xFF && d[0] != 0xAA) {
+        out->type = NRF24TypeMouseJack;
+        out->security_flag = true;
+        snprintf(out->summary, sizeof(out->summary), "MouseJack! Unencrypted 0x%02X", d[0]);
+        snprintf(out->detail, sizeof(out->detail),
+            "[!] MouseJack Risk\nDev: 0x%02X\nEncrypt: NONE\nHID injectable!\nmousejack.com", d[0]);
+        return NRF24TypeMouseJack;
+    }
+
+    out->type = NRF24TypeShockBurst;
+    char hex[28] = {0};
+    uint8_t show = n > 8 ? 8 : n;
+    int hp = 0;
+    for(uint8_t i = 0; i < show; i++)
+        hp += snprintf(hex+hp, (int)sizeof(hex)-hp, "%02X ", d[i]);
+    snprintf(out->summary, sizeof(out->summary),
+        "ShockBurst ch%d %luMHz", pkt->channel, (unsigned long)(pkt->freq_khz/1000));
+    snprintf(out->detail, sizeof(out->detail),
+        "Nordic ShockBurst\nCh: %d\nFreq: %lu MHz\nBytes: %s\nLen: %d",
+        pkt->channel, (unsigned long)(pkt->freq_khz/1000), hex, n);
+    return NRF24TypeShockBurst;
 }

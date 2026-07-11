@@ -107,7 +107,7 @@ static bool nrf24_input_cb(InputEvent* event, void* ctx) {
 
 static void nrf24_timer_cb(void* ctx) {
     RFRosettaApp* app = ctx;
-    nrf24_scanner_sweep(&app->nrf24_result);
+    nrf24_scanner_sweep(&app->gpio_config, &app->nrf24_result);
 
     NRF24ViewModel* vm = (NRF24ViewModel*)view_get_model(app->nrf24_view);
     if(vm) {
@@ -122,17 +122,10 @@ static void nrf24_timer_cb(void* ctx) {
             vm->pkt_freq_khz = app->nrf24_last_pkt.freq_khz;
             vm->pkt_len      = app->nrf24_last_pkt.length > 8 ? 8 : app->nrf24_last_pkt.length;
             memcpy(vm->pkt_data, app->nrf24_last_pkt.payload, vm->pkt_len);
-
-            // Build hex string: "A1 B2 C3 D4 E5 F6 07 08"
-            char* p = vm->pkt_str;
-            for(uint8_t i = 0; i < vm->pkt_len; i++) {
-                uint8_t b = vm->pkt_data[i];
-                *p++ = "0123456789ABCDEF"[b >> 4];
-                *p++ = "0123456789ABCDEF"[b & 0xF];
-                *p++ = ' ';
-            }
-            if(p > vm->pkt_str) *(p-1) = '\0';
-            else *p = '\0';
+            // Decode and show human-readable result instead of raw hex
+            NRF24Decode dec;
+            nrf24_decode_packet(&app->nrf24_last_pkt, &dec);
+            snprintf(vm->pkt_str, sizeof(vm->pkt_str), "%s", dec.detail);
         } else {
             vm->pkt_valid = false;
         }
@@ -157,11 +150,11 @@ void rf_rosetta_scene_nrf24_on_enter(void* ctx) {
     // ── Hardware detection ────────────────────────────────────────────────────
     // Init GPIO and power up NRF24, then read back CONFIG register to verify
     // the chip is actually present and the board switch is in NRF24 position.
-    nrf24_scanner_init();
+    nrf24_scanner_init(&app->gpio_config);
 
-    if(!nrf24_is_connected()) {
+    if(!nrf24_is_connected(&app->gpio_config)) {
         // Chip not responding — board not connected or switch in wrong position
-        nrf24_scanner_deinit();
+        nrf24_scanner_deinit(&app->gpio_config);
         widget_reset(app->widget);
         widget_add_string_element(app->widget, 64, 6,  AlignCenter, AlignTop, FontSecondary, "NRF24 Not Detected");
         widget_add_string_element(app->widget, 64, 18, AlignCenter, AlignTop, FontSecondary, "Connect your 3-in-1");
@@ -220,7 +213,7 @@ bool rf_rosetta_scene_nrf24_on_event(void* ctx, SceneManagerEvent ev) {
                     }
                 }
                 // Try to capture (300ms window)
-                nrf24_capture_packet(best_ch, 300, &app->nrf24_last_pkt);
+                nrf24_capture_packet(&app->gpio_config, best_ch, 300, &app->nrf24_last_pkt);
 
                 if(app->nrf24_timer) {
                     furi_timer_start(app->nrf24_timer, 50);
@@ -242,7 +235,7 @@ void rf_rosetta_scene_nrf24_on_exit(void* ctx) {
         furi_timer_stop(app->nrf24_timer);
         furi_timer_free(app->nrf24_timer);
         app->nrf24_timer = NULL;
-        nrf24_scanner_deinit();  // only deinit if we actually started
+        nrf24_scanner_deinit(&app->gpio_config);  // only deinit if we actually started
     }
     widget_reset(app->widget);
 }

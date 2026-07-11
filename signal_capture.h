@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "protocol_db.h"
+#include "rf_gpio_config.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scan Modes
@@ -63,6 +64,10 @@ void signal_capture_free(SignalCaptureCtx* ctx);
 // Configure scan mode and antenna before starting
 void signal_capture_set_mode(SignalCaptureCtx* ctx, ScanMode mode);
 void signal_capture_set_antenna(SignalCaptureCtx* ctx, AntennaMode antenna);
+
+// Set the active GPIO configuration for external CC1101 access.
+// Must be called before signal_capture_start() when antenna is External.
+void signal_capture_set_gpio(SignalCaptureCtx* ctx, RFGPIOConfig gpio);
 
 // Set the specific frequency to listen on (0 = sweep all)
 void signal_capture_set_frequency(SignalCaptureCtx* ctx, uint32_t freq_hz);

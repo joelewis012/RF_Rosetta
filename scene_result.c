@@ -27,6 +27,25 @@ static void save_btn_callback(GuiButtonType type, InputType input_type, void* ct
     view_dispatcher_send_custom_event(app->view_dispatcher, RFRosettaEventSaveSignal);
 }
 
+static void export_btn_callback(GuiButtonType type, InputType input_type, void* ctx) {
+    RFRosettaApp* app = ctx;
+    if(input_type != InputTypeShort) return;
+    UNUSED(type);
+    rf_rosetta_export_sub(app, &app->capture, &app->match);
+    // Show brief confirmation
+    widget_reset(app->widget);
+    const char* fname = app->last_export_path;
+    for(const char* c = app->last_export_path; *c; c++) {
+        if(*c == '/') fname = c + 1;
+    }
+    char conf[52];
+    snprintf(conf, sizeof(conf), app->last_export_path[0] ? "%s" : "Export failed", fname);
+    widget_add_string_element(app->widget, 64, 22, AlignCenter, AlignTop, FontPrimary,    "Saved as .sub");
+    widget_add_string_element(app->widget, 64, 36, AlignCenter, AlignTop, FontSecondary,  conf);
+    widget_add_button_element(app->widget, GuiButtonTypeCenter, "OK", btn_callback, app);
+    view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
+}
+
 void rf_rosetta_scene_result_on_enter(void* ctx) {
     RFRosettaApp* app = ctx;
     widget_reset(app->widget);
@@ -91,9 +110,9 @@ void rf_rosetta_scene_result_on_enter(void* ctx) {
     }
 
     // ── Buttons ───────────────────────────────────────────────────────────────
-    widget_add_button_element(app->widget, GuiButtonTypeLeft,  "Scan",    btn_callback,      app);
-    widget_add_button_element(app->widget, GuiButtonTypeRight, "Details", btn_callback,      app);
-    widget_add_button_element(app->widget, GuiButtonTypeCenter,"Save",    save_btn_callback, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft,  "Scan",    btn_callback,        app);
+    widget_add_button_element(app->widget, GuiButtonTypeRight, "Details", btn_callback,        app);
+    widget_add_button_element(app->widget, GuiButtonTypeCenter,"Save",    save_btn_callback,   app);
 
     view_dispatcher_switch_to_view(app->view_dispatcher, RFRosettaViewWidget);
 }

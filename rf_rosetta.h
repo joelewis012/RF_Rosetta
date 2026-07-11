@@ -11,13 +11,14 @@
 #include <notification/notification_messages.h>
 #include <storage/storage.h>
 
+#include "rf_gpio_config.h"
 #include "protocol_db.h"
 #include "signal_capture.h"
 #include "nrf24_scanner.h"
 #include "cc1101_ext.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CC1101 Scanning view model
+// CC1101 scanning view model
 // ─────────────────────────────────────────────────────────────────────────────
 
 typedef struct {
@@ -182,6 +183,13 @@ typedef struct {
     Storage*            storage;
     File*               log_file;
     bool                logging_enabled;
+    char                log_path[64];
+    char                last_export_path[80];
+
+    // GPIO configuration
+    // GPIO configuration
+    BoardPreset         board_preset;
+    RFGPIOConfig        gpio_config;  // active config (from preset or custom)
 } RFRosettaApp;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,5 +237,6 @@ void rf_rosetta_scene_nrf24_on_exit(void* ctx);
 void rf_rosetta_save_signals(RFRosettaApp* app);
 void rf_rosetta_load_signals(RFRosettaApp* app);
 void rf_rosetta_log_signal(RFRosettaApp* app, const SignalCapture* cap, const ProtocolMatch* match);
+void rf_rosetta_export_sub(RFRosettaApp* app, const SignalCapture* cap, const ProtocolMatch* match);
 
 

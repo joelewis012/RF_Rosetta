@@ -92,7 +92,8 @@ void rf_rosetta_log_signal(RFRosettaApp* app, const SignalCapture* cap, const Pr
     if(!app->logging_enabled || !app->storage) return;
     storage_common_mkdir(app->storage, EXT_PATH("rf_rosetta"));
     File* f = storage_file_alloc(app->storage);
-    if(storage_file_open(f, LOG_PATH, FSAM_WRITE, FSOM_OPEN_APPEND)) {
+    if(storage_file_open(f, app->log_path[0] ? app->log_path : LOG_PATH,
+                         FSAM_WRITE, FSOM_OPEN_APPEND)) {
         char line[128];
         snprintf(line, sizeof(line),
             "[%lu] %.0fdBm %luHz %s conf=%u%%\n",
@@ -107,9 +108,120 @@ void rf_rosetta_log_signal(RFRosettaApp* app, const SignalCapture* cap, const Pr
     storage_file_free(f);
 }
 
+void rf_rosetta_export_sub(RFRosettaApp* app, const SignalCapture* cap, const ProtocolMatch* match) {
+    if(!app->storage || !cap || cap->pulse_count == 0) return;
+    storage_common_mkdir(app->storage, EXT_PATH("rf_rosetta"));
+
+    // Build filename: /ext/rf_rosetta/<ShortName>_<timestamp>.sub
+    char path[80];
+    const char* proto = (match && match->matched) ? match->protocol->short_name : "RAW";
+    snprintf(path, sizeof(path), EXT_PATH("rf_rosetta/%s_%lu.sub"),
+             proto, (unsigned long)cap->timestamp);
+    // Replace spaces in filename
+    for(char* c = path + strlen(EXT_PATH("rf_rosetta/")); *c; c++) {
+        if(*c == ' ') *c = '_';
+    }
+
+    File* f = storage_file_alloc(app->storage);
+    if(!storage_file_open(f, path, FSAM_WRITE, FSOM_CREATE_ALWAYS)) {
+        storage_file_free(f);
+        return;
+    }
+
+    // Flipper Sub-GHz RAW file format
+    char line[128];
+    snprintf(line, sizeof(line),
+        "Filetype: Flipper SubGhz RAW File\nVersion: 1\n"
+        "Frequency: %lu\nPreset: FuriHalSubGhzPresetOok650Async\nProtocol: RAW\n",
+        (unsigned long)cap->frequency);
+    storage_file_write(f, line, strlen(line));
+
+    // RAW_Data: alternating +high -low pulse durations in µs
+    storage_file_write(f, "RAW_Data: ", 10);
+    for(uint16_t i = 0; i < cap->pulse_count; i++) {
+        int sign = (i % 2 == 0) ? 1 : -1;
+        snprintf(line, sizeof(line), "%d ", sign * (int)cap->raw_pulses[i]);
+        storage_file_write(f, line, strlen(line));
+    }
+    storage_file_write(f, "\n", 1);
+    storage_file_close(f);
+    storage_file_free(f);
+
+    // Store path so UI can confirm
+    snprintf(app->last_export_path, sizeof(app->last_export_path), "%s", path);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // App allocation
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Board GPIO presets
+// ─────────────────────────────────────────────────────────────────────────────
+
+RFGPIOConfig rf_rosetta_gpio_preset(BoardPreset preset) {
+    RFGPIOConfig cfg;
+    switch(preset) {
+        case BoardPreset3in1:
+            // Generic 3-in-1 board: CC1101 + NRF24 + ESP32 (most common)
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pa4;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb2;
+            break;
+        case BoardPresetDevBoard:
+            // Flipper official dev board CC1101 module
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pa4;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pc3;
+            break;
+        case BoardPresetWiFiDevBoard:
+            // Flipper WiFi dev board v1/v2
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pa4;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb2;
+            break;
+        case BoardPresetCC1101Breadboard:
+            // Bare CC1101 module, common breadboard wiring — CSN on PC0
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pc0;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb2;
+            break;
+        case BoardPresetNRF24Standalone:
+            // Bare NRF24L01+ module — CSN on PC1
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pc1;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb2;
+            break;
+        case BoardPresetMissileRF:
+            // Rabbit-Labs Missile RF board — GDO0 on PB4
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pa4;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb4;
+            break;
+        default:
+        case BoardPresetCustom:
+            // Fallback — caller should override individual pins after this
+            cfg.mosi = &gpio_ext_pa7;
+            cfg.miso = &gpio_ext_pa6;
+            cfg.csn  = &gpio_ext_pa4;
+            cfg.sck  = &gpio_ext_pb3;
+            cfg.aux  = &gpio_ext_pb2;
+            break;
+    }
+    return cfg;
+}
 
 static RFRosettaApp* rf_rosetta_alloc(void) {
     RFRosettaApp* app = malloc(sizeof(RFRosettaApp));
@@ -117,11 +229,15 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     memset(app, 0, sizeof(RFRosettaApp));
 
     // Defaults
-    app->dwell_ticks  = 3;
-    app->nrf24_timer  = NULL;
-    app->antenna        = AntennaInternal;
-    app->rssi_threshold = -80.0f;
-    app->logging_enabled = true;
+    app->dwell_ticks         = 3;
+    app->nrf24_timer         = NULL;
+    app->antenna             = AntennaInternal;
+    app->rssi_threshold      = -80.0f;
+    app->logging_enabled     = true;
+    app->log_path[0]         = '\0';  // empty = use default LOG_PATH
+    app->last_export_path[0] = '\0';
+    app->board_preset = BoardPreset3in1;
+    app->gpio_config  = rf_rosetta_gpio_preset(BoardPreset3in1);
 
     // Core GUI
     app->gui           = furi_record_open(RECORD_GUI);

@@ -3,16 +3,16 @@
 #include <stdbool.h>
 #include <furi.h>
 #include <furi_hal.h>
+#include "rf_gpio_config.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NRF24 2.4 GHz channel scanner
 //
-// Uses bit-bang SPI on Flipper external GPIO header:
-//   PA7 (pin 2)  = MOSI
-//   PA6 (pin 3)  = MISO
-//   PA4 (pin 4)  = CSN
-//   PB3 (pin 5)  = SCK
-//   PB2 (pin 6)  = CE
+// Uses the pins from the supplied RFGPIOConfig (see rf_gpio_config.h).
+// Default 3-in-1 board wiring:
+//   mosi = PA7 (pin 2)   miso = PA6 (pin 3)
+//   csn  = PA4 (pin 4)   sck  = PB3 (pin 5)
+//   aux  = PB2 (pin 6)   (CE — RX/TX enable)
 //
 // The 3-in-1 dev board has a physical switch to select CC1101 vs NRF24.
 // Switch must be in NRF24 position before using this scanner.
@@ -20,37 +20,17 @@
 
 #define NRF24_CHANNELS 125   // channels 0-124 = 2.401-2.525 GHz
 
-// WiFi channel centres in NRF24 channel numbers (approx)
-// WiFi ch1=2.412GHz → NRF24 ch11
-// WiFi ch6=2.437GHz → NRF24 ch36
-// WiFi ch11=2.462GHz → NRF24 ch61
-// BLE advertising: ch37=2.402GHz=NRF24 ch1, ch38=2.426GHz=NRF24 ch25, ch39=2.480GHz=NRF24 ch79
-
 typedef struct {
-    uint8_t  hits[NRF24_CHANNELS]; // RPD hit count per channel (capped at 255)
-    uint8_t  max_hits;             // highest hit count (for bar scaling)
-    uint32_t sweep_count;          // how many full sweeps completed
+    uint8_t  hits[NRF24_CHANNELS];
+    uint8_t  max_hits;
+    uint32_t sweep_count;
     bool     running;
 } NRF24ScanResult;
 
-// Initialise GPIO and power up NRF24 in passive RX/scanner mode
-// Call once before sweeping. Do NOT call while CC1101 scanning is active.
-void nrf24_scanner_init(void);
-
-// Returns true if chip is present and responding after init.
-// Read-back check: we write 0x03 to CONFIG in init, then verify it reads back.
-// If MISO is floating (no chip) we get 0xFF back.
-bool nrf24_is_connected(void);
-
-// Power down NRF24 and release GPIO pins back to floating/analog
-void nrf24_scanner_deinit(void);
-
-// Sweep all 125 channels — blocks for ~125 * 200µs = ~25ms
-// Updates result->hits[] and result->max_hits in place.
-// Call from a timer thread (never from draw callback).
-void nrf24_scanner_sweep(NRF24ScanResult* result);
-
-// Reset hit counts (call when user wants a fresh scan)
+void nrf24_scanner_init(const RFGPIOConfig* gpio);
+bool nrf24_is_connected(const RFGPIOConfig* gpio);
+void nrf24_scanner_deinit(const RFGPIOConfig* gpio);
+void nrf24_scanner_sweep(const RFGPIOConfig* gpio, NRF24ScanResult* result);
 void nrf24_scanner_reset(NRF24ScanResult* result);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,14 +40,33 @@ void nrf24_scanner_reset(NRF24ScanResult* result);
 #define NRF24_PKT_MAX 32
 
 typedef struct {
-    uint8_t  channel;          // NRF24 channel (0-124)
+    uint8_t  channel;
     uint8_t  payload[NRF24_PKT_MAX];
-    uint8_t  length;           // bytes captured
-    bool     valid;            // false = no packet captured
-    uint32_t freq_khz;         // approx frequency in kHz
+    uint8_t  length;
+    bool     valid;
+    uint32_t freq_khz;
 } NRF24Packet;
 
-// Attempt to capture a packet on the given channel.
-// Uses 2-byte address 0xAA/0xAA and CRC disabled (promiscuous trick).
-// Blocks for up to timeout_ms.  Returns true if a packet was received.
-bool nrf24_capture_packet(uint8_t channel, uint16_t timeout_ms, NRF24Packet* out);
+bool nrf24_capture_packet(const RFGPIOConfig* gpio, uint8_t channel,
+                           uint16_t timeout_ms, NRF24Packet* out);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Packet decode
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef enum {
+    NRF24TypeUnknown,
+    NRF24TypeMouseJack,
+    NRF24TypeShockBurst,
+    NRF24TypeBLEAdv,
+    NRF24TypeLogitek,
+} NRF24PacketType;
+
+typedef struct {
+    NRF24PacketType type;
+    char            summary[64];
+    char            detail[128];
+    bool            security_flag;
+} NRF24Decode;
+
+NRF24PacketType nrf24_decode_packet(const NRF24Packet* pkt, NRF24Decode* out);

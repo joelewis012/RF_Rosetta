@@ -68,16 +68,17 @@ static void rx_callback(bool level, uint32_t duration, void* context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct SignalCaptureCtx {
-    ScanMode    mode;
-    AntennaMode antenna;
-    bool        antenna_ok;
-    bool        use_ext_cc1101;  // true = external CC1101 via bit-bang SPI
-    uint32_t    frequency;
-    float       threshold;
-    uint16_t    sweep_index;
-    bool        running;
-    uint16_t    dwell_ms;
-    uint8_t     preset_idx;
+    ScanMode     mode;
+    AntennaMode  antenna;
+    bool         antenna_ok;
+    bool         use_ext_cc1101;
+    uint32_t     frequency;
+    float        threshold;
+    uint16_t     sweep_index;
+    bool         running;
+    uint16_t     dwell_ms;
+    uint8_t      preset_idx;
+    RFGPIOConfig gpio;   // active GPIO config for external CC1101
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +116,12 @@ SignalCaptureCtx* signal_capture_alloc(void) {
     ctx->running      = false;
     ctx->dwell_ms     = 300;
     ctx->preset_idx   = 0;
+    // Default GPIO config = 3-in-1 board pinout (caller can override with signal_capture_set_gpio)
+    ctx->gpio.mosi = &gpio_ext_pa7;
+    ctx->gpio.miso = &gpio_ext_pa6;
+    ctx->gpio.csn  = &gpio_ext_pa4;
+    ctx->gpio.sck  = &gpio_ext_pb3;
+    ctx->gpio.aux  = &gpio_ext_pb2;
     memset(&s_raw, 0, sizeof(s_raw));
     return ctx;
 }
@@ -133,6 +140,10 @@ void signal_capture_set_antenna(SignalCaptureCtx* ctx, AntennaMode antenna) {
     // Device is selected in signal_capture_start based on this setting.
     // Changing it while running requires a restart.
     ctx->antenna = antenna;
+}
+
+void signal_capture_set_gpio(SignalCaptureCtx* ctx, RFGPIOConfig gpio) {
+    ctx->gpio = gpio;
 }
 
 void signal_capture_set_frequency(SignalCaptureCtx* ctx, uint32_t freq_hz) {
@@ -177,20 +188,20 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
 
     if(ctx->antenna == AntennaExternal) {
         // ── Try external CC1101 via bit-bang SPI ─────────────────────────────
-        if(cc1101_ext_init()) {
+        if(cc1101_ext_init(&ctx->gpio)) {
             // External chip confirmed — use bit-bang driver
             ctx->use_ext_cc1101 = true;
             const uint8_t* preset = preset_ook650;
             if(ctx->mode == ScanModeRFNarrow) preset = preset_fsk238;
             if(ctx->mode == ScanModeRFWide)   preset = preset_fsk476;
-            cc1101_ext_load_preset(preset);
-            cc1101_ext_set_frequency(freq);
-            cc1101_ext_rx();
+            cc1101_ext_load_preset(&ctx->gpio, preset);
+            cc1101_ext_set_frequency(&ctx->gpio, freq);
+            cc1101_ext_rx(&ctx->gpio);
             ctx->running = true;
             return true;
         } else {
             // External not found — fall back to internal, flag it
-            cc1101_ext_deinit();
+            cc1101_ext_deinit(&ctx->gpio);
             ctx->antenna_ok = false;
         }
     }
@@ -215,8 +226,8 @@ bool signal_capture_start(SignalCaptureCtx* ctx) {
 void signal_capture_stop(SignalCaptureCtx* ctx) {
     if(!ctx->running) return;
     if(ctx->use_ext_cc1101) {
-        cc1101_ext_idle();
-        cc1101_ext_deinit();
+        cc1101_ext_idle(&ctx->gpio);
+        cc1101_ext_deinit(&ctx->gpio);
     } else {
         if(s_raw.capturing) {
             furi_hal_subghz_stop_async_rx();
@@ -233,7 +244,7 @@ float signal_capture_poll_rssi(SignalCaptureCtx* ctx) {
     if(!ctx->running) return -120.0f;
 
     if(ctx->use_ext_cc1101) {
-        return cc1101_ext_get_rssi();
+        return cc1101_ext_get_rssi(&ctx->gpio);
     }
 
     if(ctx->mode == ScanModeAll) {
@@ -346,11 +357,50 @@ static bool is_fixed_code_heuristic(const uint32_t* pulses, uint16_t count) {
 
 bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
     if(!ctx->running) return false;
-    // External CC1101: no async RX interrupt via bit-bang — internal only for now
-    if(ctx->use_ext_cc1101) return false;
     memset(out, 0, sizeof(SignalCapture));
 
     out->frequency   = ctx->frequency > 0 ? ctx->frequency : signal_capture_current_freq(ctx);
+
+    if(ctx->use_ext_cc1101) {
+        // External CC1101: capture pulses via GDO0 polling (PB2)
+        out->rssi        = cc1101_ext_get_rssi(&ctx->gpio);
+        out->noise_floor = -90.0f;
+        out->snr         = out->rssi - out->noise_floor;
+
+        uint16_t count = cc1101_ext_capture_pulses(
+            &ctx->gpio, out->raw_pulses, 512, CAPTURE_TIMEOUT_MS);
+
+        if(count < MIN_PULSE_COUNT) {
+            cc1101_ext_rx(&ctx->gpio);
+            return false;
+        }
+
+        out->pulse_count = count;
+        out->timestamp   = furi_get_tick();
+
+        uint32_t mn = out->raw_pulses[0], mx = out->raw_pulses[0];
+        uint64_t sm = 0; uint16_t vld = 0;
+        for(uint16_t i = 0; i < count; i++) {
+            uint32_t p = out->raw_pulses[i];
+            if(p > 10000) continue;
+            if(p < mn) mn = p;
+            if(p > mx) mx = p;
+            sm += p; vld++;
+        }
+        out->pulse_min         = (uint16_t)(mn > 65535 ? 65535 : mn);
+        out->pulse_max         = (uint16_t)(mx > 65535 ? 65535 : mx);
+        out->pulse_avg         = (uint16_t)(vld > 0 ? sm / vld : 0);
+        out->modulation        = detect_modulation(out->raw_pulses, count);
+        out->bandwidth_khz     = estimate_bandwidth(ctx->mode);
+        out->packet_bits       = (uint16_t)(count / 2);
+        out->repeating         = detect_repetition(out->raw_pulses, count, &out->repeat_count);
+        out->fixed_code_likely = is_fixed_code_heuristic(out->raw_pulses, count);
+
+        cc1101_ext_rx(&ctx->gpio);
+        return true;
+    }
+
+    // Internal CC1101 via furi_hal async RX
     out->rssi        = furi_hal_subghz_get_rssi();
     out->noise_floor = signal_capture_noise_floor(ctx);
     out->snr         = out->rssi - out->noise_floor;
@@ -381,10 +431,9 @@ bool signal_capture_acquire(SignalCaptureCtx* ctx, SignalCapture* out) {
         sum += p;
         valid++;
     }
-    out->pulse_min = (uint16_t)(min_p > 65535 ? 65535 : min_p);
-    out->pulse_max = (uint16_t)(max_p > 65535 ? 65535 : max_p);
-    out->pulse_avg = (uint16_t)(valid > 0 ? sum / valid : 0);
-
+    out->pulse_min         = (uint16_t)(min_p > 65535 ? 65535 : min_p);
+    out->pulse_max         = (uint16_t)(max_p > 65535 ? 65535 : max_p);
+    out->pulse_avg         = (uint16_t)(valid > 0 ? sum / valid : 0);
     out->modulation        = detect_modulation(out->raw_pulses, copy_count);
     out->bandwidth_khz     = estimate_bandwidth(ctx->mode);
     out->packet_bits       = (uint16_t)(copy_count / 2);
@@ -399,9 +448,9 @@ uint32_t signal_capture_next_freq(SignalCaptureCtx* ctx) {
     ctx->sweep_index = (ctx->sweep_index + 1) % SWEEP_FREQ_COUNT;
     uint32_t freq    = SWEEP_FREQUENCIES[ctx->sweep_index];
     if(ctx->use_ext_cc1101) {
-        cc1101_ext_idle();
-        cc1101_ext_set_frequency(freq);
-        cc1101_ext_rx();
+        cc1101_ext_idle(&ctx->gpio);
+        cc1101_ext_set_frequency(&ctx->gpio, freq);
+        cc1101_ext_rx(&ctx->gpio);
     } else {
         furi_hal_subghz_idle();
         furi_hal_subghz_set_frequency_and_path(freq);

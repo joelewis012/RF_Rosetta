@@ -313,6 +313,7 @@ void rf_rosetta_scene_scanning_on_enter(void* ctx) {
     signal_capture_set_mode(app->capture_ctx, app->scan_mode);
     signal_capture_set_antenna(app->capture_ctx, app->antenna);
     signal_capture_set_threshold(app->capture_ctx, app->rssi_threshold);
+    signal_capture_set_gpio(app->capture_ctx, app->gpio_config);
     signal_capture_start(app->capture_ctx);
 
     app->noise_floor = signal_capture_noise_floor(app->capture_ctx);

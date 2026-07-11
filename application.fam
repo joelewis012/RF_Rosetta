@@ -9,6 +9,6 @@ App(
     fap_category="Sub-GHz",
     fap_description="Universal RF signal identifier. Point at any unknown signal and find out exactly what it is.",
     fap_author="Joe",
-    fap_weburl="https://github.com/yourusername/rf_rosetta",
+    fap_weburl="https://github.com/joelewis012/rf_rosetta",
     fap_version="1.0",
 )
