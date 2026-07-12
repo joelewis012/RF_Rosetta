@@ -1,17 +1,8 @@
 <div align="center">
 
-```
-██████╗ ███████╗    ██████╗  ██████╗ ███████╗███████╗████████╗████████╗ █████╗
-██╔══██╗██╔════╝    ██╔══██╗██╔═══██╗██╔════╝██╔════╝╚══██╔══╝╚══██╔══╝██╔══██╗
-██████╔╝█████╗      ██████╔╝██║   ██║███████╗█████╗     ██║      ██║   ███████║
-██╔══██╗██╔══╝      ██╔══██╗██║   ██║╚════██║██╔══╝     ██║      ██║   ██╔══██║
-██║  ██║██║         ██║  ██║╚██████╔╝███████║███████╗   ██║      ██║   ██║  ██║
-╚═╝  ╚═╝╚═╝         ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝
-```
+<img src="assets/logo.svg" alt="RF Rosetta" width="700">
 
 # RF Rosetta
-
-### *Every signal has a story. Now you can read it.*
 
 **The first universal RF signal identifier for the Flipper Zero.**
 
@@ -140,11 +131,33 @@ from **NRF24 2.4GHz Scan** on the main menu.
   - **BLE Advertising** — PDU type and advertiser MAC address
   - **Logitech Unifying** — device ID, flagged for MouseJack risk
   - **MouseJack** — unencrypted HID packets, flagged as a security risk
-  - **Nordic ShockBurst** — generic packet with hex dump if no known pattern matches
+  - **Encrypted payload** — statistical heuristic (byte diversity, run-length
+    analysis) flags packets that look like ciphertext even when they don't
+    match a known unencrypted pattern
+  - **Nordic ShockBurst** — generic packet with hex dump if nothing else matches
 
 > Requires a dev board with NRF24 hardware, with the board's switch (if present) in
 > NRF24 position. RF Rosetta detects whether the chip is connected — if not, it
 > shows a "Not Detected" screen instead of guessing.
+
+---
+
+## WiFi Scanner (ESP32/Marauder)
+
+RF Rosetta can drive an ESP32 flashed with [Marauder](https://github.com/justcallmekoko/ESP32Marauder)
+firmware over UART. Launch it from **WiFi Scan (Marauder)** on the main menu.
+
+- Sends `scanap` to start an access point scan, `stopscan` to stop
+- Shows a live, scrolling terminal view of everything Marauder sends back
+- Best-effort parses AP lines for SSID, BSSID, RSSI, channel, and encryption
+  type, and keeps a running AP count
+- Press **OK** to start/stop scanning, **Back** to exit and close the UART
+
+> **Field-testing note**: Marauder's serial output format has changed across
+> firmware forks and versions, so the structured parser is best-effort. You'll
+> always see the raw text either way — the parser just adds structure on top
+> when it recognises a line. If AP details aren't populating on your build,
+> the raw scroll is still fully functional as a live monitor.
 
 ---
 
@@ -157,7 +170,7 @@ using a proper GPIO preset system so you're not locked to one specific board.
 |---|---|
 | **External CC1101** | Full sub-GHz scanning + signal capture, same as internal — plus better range on high-gain boards |
 | **NRF24L01** | 2.4 GHz channel scanner, packet capture, and decode (BLE adv, ShockBurst, MouseJack detection) |
-| **ESP32 (Marauder)** | Coming soon — WiFi network scanner |
+| **ESP32 (Marauder)** | Live WiFi network scanner over UART — see below |
 
 ### Board Presets
 
@@ -273,7 +286,8 @@ Pull requests for new protocols are very welcome.
 ## FAQ
 
 **Will this work on all Flipper Zero hardware?**
-Yes — the Sub-GHz scanner uses the built-in CC1101. NRF24 scanning requires the dev board.
+Yes — the Sub-GHz scanner uses the built-in CC1101. NRF24 and WiFi scanning
+require a dev board with the relevant module.
 
 **Does it decode the actual content of signals?**
 Yes, for a growing set of protocols. TPMS shows live pressure and temperature,
@@ -303,9 +317,10 @@ Unknown signals help grow the database.
 - [x] .sub file export (compatible with Flipper's Sub-GHz player)
 - [x] Custom GPIO / multi-board support
 - [x] 120+ protocol database
-- [ ] ESP32/Marauder WiFi network scanner integration
-- [ ] NRF24 encrypted payload heuristics (beyond MouseJack/ShockBurst)
+- [x] ESP32/Marauder WiFi network scanner integration
+- [x] NRF24 encrypted payload heuristics (beyond MouseJack/ShockBurst)
 - [ ] Community protocol submission via GitHub Issues template
+- [ ] Structured Marauder AP parser tuned against real hardware output (currently best-effort)
 
 ---
 
@@ -314,7 +329,7 @@ Unknown signals help grow the database.
 Contributions are welcome, especially:
 - New protocol signatures in `protocol_db.c`
 - Bug reports with captured signal details
-- ESP32 companion code for WiFi scanning
+- Tuning the Marauder AP parser against real serial output (see [WiFi Scanner](#wifi-scanner-esp32marauder))
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the protocol format, build setup,
 and a list of SDK quirks that will save you debugging time. This project
