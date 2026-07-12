@@ -164,6 +164,76 @@ bool nrf24_capture_packet(const RFGPIOConfig* gpio, uint8_t channel,
 // Packet decode
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Encrypted payload heuristics
+//
+// Real encryption output (AES-CTR, ChaCha, XOR-keystream, etc.) statistically
+// resembles uniform random noise: every byte value is roughly equally likely,
+// and no single byte value dominates. Plaintext protocol data — even data we
+// don't recognise — almost always has structure: repeated sync bytes, zero
+// padding, low-entropy counters, checksums correlated with other bytes.
+//
+// These are heuristics, not proof. A short payload can look "random" by
+// chance, and some legitimate unencrypted protocols use scrambling/whitening
+// that also looks statistically flat. The result is a hint, not a verdict —
+// hence the summary always says "appears" / "likely".
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Percentage (0-100) of bytes in the payload that are unique values.
+static uint8_t nrf24_byte_diversity_pct(const uint8_t* d, uint8_t n) {
+    if(n == 0) return 0;
+    bool seen[256] = {false};
+    uint8_t unique = 0;
+    for(uint8_t i = 0; i < n; i++) {
+        if(!seen[d[i]]) {
+            seen[d[i]] = true;
+            unique++;
+        }
+    }
+    return (uint8_t)((uint16_t)unique * 100 / n);
+}
+
+// Percentage (0-100) the most frequent byte value represents.
+static uint8_t nrf24_max_byte_repeat_pct(const uint8_t* d, uint8_t n) {
+    if(n == 0) return 0;
+    uint8_t counts[256] = {0};
+    for(uint8_t i = 0; i < n; i++) counts[d[i]]++;
+    uint8_t max_count = 0;
+    for(uint16_t i = 0; i < 256; i++) {
+        if(counts[i] > max_count) max_count = counts[i];
+    }
+    return (uint8_t)((uint16_t)max_count * 100 / n);
+}
+
+// Length of the longest run of identical consecutive bytes.
+static uint8_t nrf24_longest_run(const uint8_t* d, uint8_t n) {
+    if(n == 0) return 0;
+    uint8_t longest = 1, current = 1;
+    for(uint8_t i = 1; i < n; i++) {
+        if(d[i] == d[i-1]) {
+            current++;
+            if(current > longest) longest = current;
+        } else {
+            current = 1;
+        }
+    }
+    return longest;
+}
+
+// Returns true if the payload statistically resembles encrypted/random data.
+static bool nrf24_looks_encrypted(const uint8_t* d, uint8_t n, uint8_t* diversity_out) {
+    if(n < 8) return false;  // too short to say anything meaningful
+
+    uint8_t diversity = nrf24_byte_diversity_pct(d, n);
+    uint8_t max_rep    = nrf24_max_byte_repeat_pct(d, n);
+    uint8_t run        = nrf24_longest_run(d, n);
+
+    if(diversity_out) *diversity_out = diversity;
+
+    // High diversity + no dominant byte + no long runs = looks encrypted
+    return (diversity >= 70) && (max_rep <= 15) && (run <= 2);
+}
+
 NRF24PacketType nrf24_decode_packet(const NRF24Packet* pkt, NRF24Decode* out) {
     out->type          = NRF24TypeUnknown;
     out->security_flag = false;
@@ -207,6 +277,27 @@ NRF24PacketType nrf24_decode_packet(const NRF24Packet* pkt, NRF24Decode* out) {
         snprintf(out->detail, sizeof(out->detail),
             "[!] MouseJack Risk\nDev: 0x%02X\nEncrypt: NONE\nHID injectable!\nmousejack.com", d[0]);
         return NRF24TypeMouseJack;
+    }
+
+    // Encrypted payload heuristic — checked before falling back to generic
+    // ShockBurst display, since a "just show hex" result is a wasted
+    // opportunity if the payload statistics already tell us something.
+    {
+        uint8_t diversity = 0;
+        if(nrf24_looks_encrypted(d, n, &diversity)) {
+            out->type = NRF24TypeEncrypted;
+            out->security_flag = false; // encryption is a good sign, not a risk
+            snprintf(out->summary, sizeof(out->summary),
+                "Encrypted? ch%d diversity %d%%", pkt->channel, diversity);
+            snprintf(out->detail, sizeof(out->detail),
+                "Payload Analysis\n"
+                "Ch: %d  Len: %d\n"
+                "Byte diversity: %d%%\n"
+                "Looks encrypted\n"
+                "(heuristic, not proof)",
+                pkt->channel, n, diversity);
+            return NRF24TypeEncrypted;
+        }
     }
 
     out->type = NRF24TypeShockBurst;

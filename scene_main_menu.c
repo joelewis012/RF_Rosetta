@@ -3,6 +3,7 @@
 typedef enum {
     MenuScan,
     MenuNRF24,
+    MenuWifi,
     MenuSaved,
     MenuSettings,
     MenuAbout,
@@ -13,6 +14,7 @@ static void menu_callback(void* ctx, uint32_t index) {
     switch(index) {
         case MenuScan:     scene_manager_next_scene(app->scene_manager, RFRosettaSceneScanning); break;
         case MenuNRF24:    scene_manager_next_scene(app->scene_manager, RFRosettaSceneNRF24);    break;
+        case MenuWifi:     scene_manager_next_scene(app->scene_manager, RFRosettaSceneWifi);     break;
         case MenuSaved:    scene_manager_next_scene(app->scene_manager, RFRosettaSceneSaved);    break;
         case MenuSettings: scene_manager_next_scene(app->scene_manager, RFRosettaSceneSettings); break;
         case MenuAbout:    scene_manager_next_scene(app->scene_manager, RFRosettaSceneAbout);    break;
@@ -25,6 +27,7 @@ void rf_rosetta_scene_main_menu_on_enter(void* ctx) {
     submenu_set_header(app->submenu, "RF Rosetta");
     submenu_add_item(app->submenu, "CC1101 Sub-GHz Scan", MenuScan,     menu_callback, app);
     submenu_add_item(app->submenu, "NRF24 2.4GHz Scan",   MenuNRF24,   menu_callback, app);
+    submenu_add_item(app->submenu, "WiFi Scan (Marauder)",MenuWifi,    menu_callback, app);
     submenu_add_item(app->submenu, "Saved Signals",        MenuSaved,   menu_callback, app);
     submenu_add_item(app->submenu, "Settings",             MenuSettings,menu_callback, app);
     submenu_add_item(app->submenu, "About",                MenuAbout,   menu_callback, app);

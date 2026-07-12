@@ -29,6 +29,7 @@ static void (*const scene_on_enter[])(void*) = {
     rf_rosetta_scene_settings_on_enter,
     rf_rosetta_scene_about_on_enter,
     rf_rosetta_scene_nrf24_on_enter,
+    rf_rosetta_scene_wifi_on_enter,
 };
 
 static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
@@ -40,6 +41,7 @@ static bool (*const scene_on_event[])(void*, SceneManagerEvent) = {
     rf_rosetta_scene_settings_on_event,
     rf_rosetta_scene_about_on_event,
     rf_rosetta_scene_nrf24_on_event,
+    rf_rosetta_scene_wifi_on_event,
 };
 
 static void (*const scene_on_exit[])(void*) = {
@@ -51,6 +53,7 @@ static void (*const scene_on_exit[])(void*) = {
     rf_rosetta_scene_settings_on_exit,
     rf_rosetta_scene_about_on_exit,
     rf_rosetta_scene_nrf24_on_exit,
+    rf_rosetta_scene_wifi_on_exit,
 };
 
 const SceneManagerHandlers rf_rosetta_scene_handlers = {
@@ -281,6 +284,13 @@ static RFRosettaApp* rf_rosetta_alloc(void) {
     view_allocate_model(app->nrf24_view, ViewModelTypeLockFree, sizeof(NRF24ViewModel));
     view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewNRF24, app->nrf24_view);
 
+    // WiFi/Marauder view
+    app->wifi_view = view_alloc();
+    view_allocate_model(app->wifi_view, ViewModelTypeLockFree, sizeof(WiFiViewModel));
+    view_dispatcher_add_view(app->view_dispatcher, RFRosettaViewWifi, app->wifi_view);
+    app->marauder   = NULL;  // allocated lazily on first entry to WiFi scene
+    app->wifi_timer = NULL;
+
     // Mutex for sharing signal data between timer and UI
     app->data_mutex = furi_mutex_alloc(FuriMutexTypeNormal);
 
@@ -313,6 +323,10 @@ static void rf_rosetta_free(RFRosettaApp* app) {
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewVarList);
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewNRF24);
     view_free(app->nrf24_view);
+
+    view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewWifi);
+    view_free(app->wifi_view);
+    if(app->marauder) esp32_marauder_free(app->marauder);
 
     view_dispatcher_remove_view(app->view_dispatcher, RFRosettaViewScanning);
 

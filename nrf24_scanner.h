@@ -60,6 +60,7 @@ typedef enum {
     NRF24TypeShockBurst,
     NRF24TypeBLEAdv,
     NRF24TypeLogitek,
+    NRF24TypeEncrypted,   // heuristic: payload statistics look like ciphertext
 } NRF24PacketType;
 
 typedef struct {

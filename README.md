@@ -316,6 +316,10 @@ Contributions are welcome, especially:
 - Bug reports with captured signal details
 - ESP32 companion code for WiFi scanning
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the protocol format, build setup,
+and a list of SDK quirks that will save you debugging time. This project
+follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+
 Please open an issue before a large PR so we can discuss approach.
 
 ---

@@ -15,6 +15,7 @@
 #include "protocol_db.h"
 #include "signal_capture.h"
 #include "nrf24_scanner.h"
+#include "esp32_marauder.h"
 #include "cc1101_ext.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +59,17 @@ typedef struct {
 } NRF24ViewModel;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WiFi/Marauder scanning view model
+// ─────────────────────────────────────────────────────────────────────────────
+
+typedef struct {
+    char    lines[MARAUDER_LINES_BUF][MARAUDER_LINE_MAX];
+    uint8_t line_count;
+    uint8_t ap_count;
+    bool    scanning;
+} WiFiViewModel;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scenes
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -70,6 +82,7 @@ typedef enum {
     RFRosettaSceneSettings,
     RFRosettaSceneAbout,
     RFRosettaSceneNRF24,
+    RFRosettaSceneWifi,
     RFRosettaSceneCount,
 } RFRosettaScene;
 
@@ -84,6 +97,7 @@ typedef enum {
     RFRosettaViewTextBox,
     RFRosettaViewVarList,
     RFRosettaViewNRF24,
+    RFRosettaViewWifi,
     RFRosettaViewCount,
 } RFRosettaViewId;
 
@@ -101,6 +115,7 @@ typedef enum {
     RFRosettaEventNRF24Reset,
     RFRosettaEventDwellUp,
     RFRosettaEventDwellDown,
+    RFRosettaEventWifiToggleScan,
 } RFRosettaEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,9 +157,13 @@ typedef struct {
     // NRF24 custom scanning view
     View*               nrf24_view;
 
+    // WiFi/Marauder custom scanning view
+    View*               wifi_view;
+
     // Timers
     FuriTimer*          scan_timer;    // CC1101 RSSI poll (100ms)
     FuriTimer*          nrf24_timer;   // NRF24 sweep (50ms) — NULL when inactive
+    FuriTimer*          wifi_timer;    // Marauder UART poll (150ms) — NULL when inactive
     FuriMutex*          data_mutex;
 
     // CC1101 radio backend
@@ -162,6 +181,11 @@ typedef struct {
     // NRF24 scan state
     NRF24ScanResult     nrf24_result;
     NRF24Packet         nrf24_last_pkt;  // most recently captured packet
+
+    // WiFi/Marauder scan state
+    ESP32Marauder*      marauder;        // NULL until first entering WiFi scene
+    MarauderLineBuf     wifi_lines;
+    WiFiScanResult      wifi_result;
 
     // Settings
     ScanMode            scan_mode;
@@ -229,6 +253,10 @@ void rf_rosetta_scene_about_on_exit(void* ctx);
 void rf_rosetta_scene_nrf24_on_enter(void* ctx);
 bool rf_rosetta_scene_nrf24_on_event(void* ctx, SceneManagerEvent ev);
 void rf_rosetta_scene_nrf24_on_exit(void* ctx);
+
+void rf_rosetta_scene_wifi_on_enter(void* ctx);
+bool rf_rosetta_scene_wifi_on_event(void* ctx, SceneManagerEvent ev);
+void rf_rosetta_scene_wifi_on_exit(void* ctx);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage helpers
